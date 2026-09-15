@@ -1,4 +1,10 @@
-This prototype is intended to be distributed under the GNU General Public License v3.0-or-later.
-See https://www.gnu.org/licenses/gpl-3.0.txt for the license text.
+SPDX-License-Identifier: GPL-3.0-or-later
 
-Reno119 is an independent project and is not affiliated with ReShade, RenoDX, OptiScaler, REFramework, Valve, or PCGamingWiki.
+Reno119 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+Reno119 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with Reno119. If not, see <https://www.gnu.org/licenses/>.
+
+The canonical GPLv3 license text is available at:
+https://www.gnu.org/licenses/gpl-3.0.txt
