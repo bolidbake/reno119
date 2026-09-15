@@ -4,6 +4,8 @@ Reno119 is a Linux-native Qt 6/QML manager focused on making **RenoDX HDR setup 
 
 It discovers games from Steam, Heroic, Lutris, and custom entries, checks what each title needs, and brings RenoDX, ReShade, REFramework, OptiScaler integration, backups, diagnostics, and recommended setup into one interface.
 
+> Reno119 is primarily a personal-use project that I made public in case it is useful to someone else. There is no promise of long-term support or a fixed release schedule. Contributions, forks, and even a future maintainer taking over the project are very welcome.
+
 > Reno119 is an independent project and is not affiliated with RenoDX, ReShade, OptiScaler, REFramework, Valve, Heroic, Lutris, or PCGamingWiki.
 
 ## Features
@@ -97,6 +99,12 @@ Reno119 is intentionally not a general-purpose game launcher or mod manager. Its
 **select game → see recommended setup → install/apply → get HDR working**
 
 Advanced component controls remain available for troubleshooting and manual management.
+
+## Maintenance and contributions
+
+This repository is public primarily so others can use, inspect, improve, or fork it. Bug reports and focused fixes are welcome, but support is best-effort.
+
+If somebody eventually wants to become the primary maintainer or carry Reno119 forward more actively, that would be welcome too.
 
 ## Documentation
 
