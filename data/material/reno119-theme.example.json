@@ -1,0 +1,26 @@
+{
+  "format": "reno119-material-theme",
+  "name": "Example Material 3",
+  "mode": "dark",
+  "colors": {
+    "primary": "#d0bcff",
+    "on_primary": "#381e72",
+    "primary_container": "#4f378b",
+    "on_primary_container": "#eaddff",
+    "secondary": "#ccc2dc",
+    "on_secondary": "#332d41",
+    "tertiary": "#efb8c8",
+    "surface": "#1c1b1f",
+    "on_surface": "#e6e1e5",
+    "surface_variant": "#49454f",
+    "on_surface_variant": "#cac4d0",
+    "surface_container_low": "#1d1b20",
+    "surface_container": "#211f26",
+    "surface_container_high": "#2b2930",
+    "surface_container_highest": "#36343b",
+    "outline": "#938f99",
+    "outline_variant": "#49454f",
+    "error": "#f2b8b5",
+    "on_error": "#601410"
+  }
+}

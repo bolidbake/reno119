@@ -1,0 +1,7 @@
+# Add this to ~/.config/noctalia/templates.toml (or the active Noctalia config)
+# after copying reno119-theme.json.template into your Noctalia templates folder.
+# Paths may be adjusted to match your XDG configuration directory.
+
+[theme.templates.user.reno119]
+input_path = "$XDG_CONFIG_HOME/noctalia/templates/reno119-theme.json.template"
+output_path = "$XDG_CONFIG_HOME/reno119/noctalia-theme.json"
