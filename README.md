@@ -45,8 +45,6 @@ cd reno119
 ./build.sh
 ```
 
-`build.sh` always uses the Reno119 source directory and writes build output to `reno119/build/`, even when the script is launched from another working directory.
-
 ## Install system-wide
 
 ```bash
