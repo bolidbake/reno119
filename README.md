@@ -60,7 +60,7 @@ sudo cmake --install build
 
 This installs the Reno119 executable, desktop launcher, and bundled theme/template support files.
 
-An Arch/CachyOS `PKGBUILD` is also included under `packaging/arch/`.
+An Arch/CachyOS `PKGBUILD` is also included under `packaging/arch/`. It is ready to use once a matching `v0.23.5` Git tag exists.
 
 ## Noctalia v5 theming
 
@@ -102,8 +102,9 @@ Advanced component controls remain available for troubleshooting and manual mana
 
 ## Documentation
 
-- Detailed release history: [`CHANGELOG.md`](CHANGELOG.md)
-- GitHub Pages starter site: [`docs/`](docs/)
+- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
+- Project site source: [`docs/`](docs/)
+- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## License
 
