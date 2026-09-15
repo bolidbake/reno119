@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Reno119
+Comment=No-hassle RenoDX HDR setup for Linux gaming
+Exec=reno119
+Terminal=false
+Categories=Game;Utility;
+Keywords=HDR;RenoDX;ReShade;Proton;Steam;Heroic;Lutris;
+StartupNotify=true
+StartupWMClass=reno119
