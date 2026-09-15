@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(reno119 VERSION 0.23.4 LANGUAGES CXX)
+project(reno119 VERSION 0.23.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -113,6 +113,10 @@ install(FILES
 install(FILES
     data/material/reno119-theme.example.json
     DESTINATION share/reno119/themes
+)
+install(FILES
+    data/applications/reno119.desktop
+    DESTINATION share/applications
 )
 option(RENO119_BUILD_TESTS "Build Reno119 regression tests" OFF)
 if(RENO119_BUILD_TESTS)
