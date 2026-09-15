@@ -1,0 +1,29 @@
+# Maintainer: bolidbake
+pkgname=reno119
+pkgver=0.23.5
+pkgrel=1
+pkgdesc='No-hassle RenoDX HDR setup for Linux gaming'
+arch=('x86_64')
+url='https://github.com/bolidbake/reno119'
+license=('GPL-3.0-or-later')
+depends=('qt6-base' 'qt6-declarative')
+makedepends=('cmake' 'ninja')
+optdepends=(
+  'xdg-desktop-portal: native file/folder picker integration'
+  'steam: Steam library discovery and Proton workflows'
+  'heroic-games-launcher-bin: Heroic library discovery'
+  'lutris: Lutris library discovery'
+)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cmake -S "$pkgname-$pkgver" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
