@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Reno119 — no-hassle RenoDX HDR setup for Linux gaming.">
+  <meta name="theme-color" content="#07070a">
+  <title>Reno119</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div class="eyebrow">Linux · Qt 6 · RenoDX</div>
+      <h1>Reno119</h1>
+      <p class="lede">No-hassle RenoDX HDR setup for games running through Proton and Wine.</p>
+      <p class="intro">Discover your games, see the recommended setup, and manage RenoDX, ReShade, REFramework, and OptiScaler from one focused Linux-native interface.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/bolidbake/reno119">View on GitHub</a>
+        <a class="button" href="https://github.com/bolidbake/reno119/releases">Releases</a>
+      </div>
+    </section>
+
+    <section>
+      <h2>Focused on getting HDR working</h2>
+      <div class="grid">
+        <article>
+          <h3>Recommended Setup</h3>
+          <p>See what a game needs and install, update, review, preview, or fix it directly from the recommendation.</p>
+        </article>
+        <article>
+          <h3>Linux library discovery</h3>
+          <p>Steam, Heroic, Lutris, and custom programs can share one library without turning Reno119 into another launcher.</p>
+        </article>
+        <article>
+          <h3>Safer changes</h3>
+          <p>Managed backups, restore points, health checks, and cautious handling of ambiguous RenoDX matches.</p>
+        </article>
+        <article>
+          <h3>Noctalia + Material</h3>
+          <p>Material 3 themes, Noctalia v5 generated palettes, Pure Black surfaces, and live theme reloads.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="install">
+      <h2>Build on Arch / CachyOS</h2>
+      <pre><code>sudo pacman -S --needed base-devel cmake ninja qt6-base qt6-declarative
+
+git clone https://github.com/bolidbake/reno119.git
+cd reno119
+./build.sh</code></pre>
+      <p>System-wide installation support is being prepared alongside Arch/CachyOS packaging.</p>
+    </section>
+
+    <section>
+      <h2>The workflow</h2>
+      <p class="workflow">select game <span>→</span> see recommended setup <span>→</span> install/apply <span>→</span> get HDR working</p>
+      <p>Advanced controls stay available for troubleshooting, but the main path is intentionally simple.</p>
+    </section>
+  </main>
+
+  <footer>
+    <span>Reno119 · GPL-3.0-or-later</span>
+    <span>Independent project; not affiliated with RenoDX, ReShade, OptiScaler, REFramework, Valve, Heroic, Lutris, or PCGamingWiki.</span>
+  </footer>
+</body>
+</html>
