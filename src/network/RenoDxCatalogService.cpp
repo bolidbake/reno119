@@ -419,10 +419,15 @@ void RenoDxCatalogService::refreshRenoDxSourceRevision(const QString &gameName, 
             done();
         return;
     }
-    if (!forceRefresh && renoDxRevisionCacheFresh(sourceKey)) {
-        if (done)
-            done();
-        return;
+    if (!forceRefresh) {
+        const QJsonObject cached = m_renoDxRevisionCache.value(sourceKey).toObject();
+        const QDateTime checked = QDateTime::fromString(cached.value(QStringLiteral("checkedUtc")).toString(), Qt::ISODate);
+        const qint64 age = checked.secsTo(QDateTime::currentDateTimeUtc());
+        if (checked.isValid() && age >= 0 && age < kRenoDxRevisionCacheSeconds) {
+            if (done)
+                done();
+            return;
+        }
     }
 
     const QString owner = QString::fromUtf8(QUrl::toPercentEncoding(match.sourceOwner));
@@ -460,8 +465,10 @@ void RenoDxCatalogService::refreshRenoDxSourceRevision(const QString &gameName, 
                 }
             }
         }
-        if (!accepted)
+        if (!accepted) {
+            entry.insert(QStringLiteral("checkedUtc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
             entry.insert(QStringLiteral("refreshFailed"), true);
+        }
         m_renoDxRevisionCache.insert(sourceKey, entry);
         saveRenoDxRevisionCache();
         emit catalogChanged();
