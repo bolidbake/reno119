@@ -13,6 +13,7 @@
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
+#include <QUrlQuery>
 
 namespace {
 constexpr auto kRenoDxWikiUrl = "https://raw.githubusercontent.com/wiki/clshortfuse/renodx/Mods.md";
@@ -20,6 +21,11 @@ constexpr auto kRhiManifestUrl = "https://raw.githubusercontent.com/RankFTW/RHI/
 constexpr auto kRhiEngineFilesBase = "https://raw.githubusercontent.com/RankFTW/RHI/main/engine-files/";
 constexpr auto kUserAgent = "Reno119/" RENO119_VERSION;
 constexpr qint64 kRhiCacheSeconds = 24LL * 60 * 60;
+constexpr qint64 kRenoDxRevisionCacheSeconds = 6LL * 60 * 60;
+
+QString renoDxRevisionCachePath() {
+    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/renodx-revisions-v1.json");
+}
 
 QString rhiCachePath() {
     return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/rhi-metadata-v1.json");
@@ -49,6 +55,7 @@ RenoDxCatalogService::RenoDxCatalogService(QObject *parent) : QObject(parent) {
         m_renoDxCatalogReady = !m_renoDxEntries.isEmpty();
         m_renoDxCatalogFinished = m_renoDxCatalogReady;
     }
+    loadRenoDxRevisionCache();
     loadRhiCache();
     refreshCatalog();
 }
@@ -213,6 +220,9 @@ void RenoDxCatalogService::parseRenoDxWiki(const QString &markdown) {
     static const QRegularExpression addonUrl(
         R"(\]\((https?://[^\)\s]+\.addon(?:64|32)(?:\?[^\)\s]*)?)\))",
         QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression sourceBadge(
+        R"(https://img\.shields\.io/github/last-commit/[^\)\s]+)",
+        QRegularExpression::CaseInsensitiveOption);
 
     QSet<QString> seenKeys;
     const QStringList lines = markdown.split('\n');
@@ -233,8 +243,26 @@ void RenoDxCatalogService::parseRenoDxWiki(const QString &markdown) {
         if (!match.hasMatch())
             continue;
 
+        QString sourceOwner;
+        QString sourceRepo;
+        QString sourcePath;
+        const auto badgeMatch = sourceBadge.match(line);
+        if (badgeMatch.hasMatch()) {
+            const QUrl badgeUrl(badgeMatch.captured(0));
+            const QStringList segments = badgeUrl.path().split('/', Qt::SkipEmptyParts);
+            if (segments.size() >= 4 &&
+                segments.at(0).compare(QStringLiteral("github"), Qt::CaseInsensitive) == 0 &&
+                segments.at(1).compare(QStringLiteral("last-commit"), Qt::CaseInsensitive) == 0) {
+                sourceOwner = segments.at(2);
+                sourceRepo = segments.at(3);
+                QUrlQuery query(badgeUrl);
+                sourcePath = query.queryItemValue(QStringLiteral("path"), QUrl::FullyDecoded).trimmed();
+            }
+        }
+
         seenKeys.insert(key);
-        m_renoDxEntries.push_back({RenoDxTitleMatcher::cleanDisplayTitle(rawTitle), match.captured(1)});
+        m_renoDxEntries.push_back({RenoDxTitleMatcher::cleanDisplayTitle(rawTitle), match.captured(1),
+                                   sourceOwner, sourceRepo, sourcePath});
     }
 }
 
@@ -344,6 +372,104 @@ void RenoDxCatalogService::fetchRhiEngineIniProfile(const QString &normalizedGam
     });
 }
 
+void RenoDxCatalogService::loadRenoDxRevisionCache() {
+    QFile file(renoDxRevisionCachePath());
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (doc.isObject())
+        m_renoDxRevisionCache = doc.object();
+}
+
+void RenoDxCatalogService::saveRenoDxRevisionCache() const {
+    const QString path = renoDxRevisionCachePath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QSaveFile file(path);
+    const QByteArray data = QJsonDocument(m_renoDxRevisionCache).toJson();
+    if (file.open(QIODevice::WriteOnly) && file.write(data) == data.size())
+        file.commit();
+}
+
+bool RenoDxCatalogService::renoDxRevisionCacheFresh(const QString &sourceKey) const {
+    if (sourceKey.isEmpty())
+        return false;
+    const QJsonObject entry = m_renoDxRevisionCache.value(sourceKey).toObject();
+    const QString revision = entry.value(QStringLiteral("revision")).toString();
+    const QDateTime checked = QDateTime::fromString(entry.value(QStringLiteral("checkedUtc")).toString(), Qt::ISODate);
+    const qint64 age = checked.secsTo(QDateTime::currentDateTimeUtc());
+    return !revision.isEmpty() && checked.isValid() && age >= 0 && age < kRenoDxRevisionCacheSeconds &&
+           !entry.value(QStringLiteral("refreshFailed")).toBool();
+}
+
+QString RenoDxCatalogService::renoDxSourceRevision(const QString &gameName) const {
+    const auto match = RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries);
+    const QString sourceKey = match.sourceKey();
+    if (!match.matched() || sourceKey.isEmpty() || !renoDxRevisionCacheFresh(sourceKey))
+        return {};
+    return m_renoDxRevisionCache.value(sourceKey).toObject().value(QStringLiteral("revision")).toString();
+}
+
+void RenoDxCatalogService::refreshRenoDxSourceRevision(const QString &gameName, bool forceRefresh,
+                                                       std::function<void()> done) {
+    const auto match = RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries);
+    const QString sourceKey = match.sourceKey();
+    if (!match.matched() || sourceKey.isEmpty() || match.sourceOwner.isEmpty() || match.sourceRepo.isEmpty()) {
+        if (done)
+            done();
+        return;
+    }
+    if (!forceRefresh && renoDxRevisionCacheFresh(sourceKey)) {
+        if (done)
+            done();
+        return;
+    }
+
+    const QString owner = QString::fromUtf8(QUrl::toPercentEncoding(match.sourceOwner));
+    const QString repo = QString::fromUtf8(QUrl::toPercentEncoding(match.sourceRepo));
+    QUrl api(QStringLiteral("https://api.github.com/repos/%1/%2/commits").arg(owner, repo));
+    QUrlQuery query;
+    if (!match.sourcePath.isEmpty())
+        query.addQueryItem(QStringLiteral("path"), match.sourcePath);
+    query.addQueryItem(QStringLiteral("per_page"), QStringLiteral("1"));
+    api.setQuery(query);
+
+    QNetworkRequest request(api);
+    request.setHeader(QNetworkRequest::UserAgentHeader, QString::fromLatin1(kUserAgent));
+    request.setRawHeader("Accept", "application/vnd.github+json");
+    request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
+    request.setTransferTimeout(15000);
+    auto *reply = m_net.get(request);
+    QTimer::singleShot(20000, reply, [reply] { if (!reply->isFinished()) reply->abort(); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, sourceKey, match, done = std::move(done)]() mutable {
+        QJsonObject entry = m_renoDxRevisionCache.value(sourceKey).toObject();
+        bool accepted = false;
+        if (reply->error() == QNetworkReply::NoError) {
+            QJsonParseError error{};
+            const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &error);
+            if (error.error == QJsonParseError::NoError && doc.isArray() && !doc.array().isEmpty()) {
+                const QString revision = doc.array().first().toObject().value(QStringLiteral("sha")).toString().trimmed();
+                if (!revision.isEmpty()) {
+                    entry.insert(QStringLiteral("revision"), revision);
+                    entry.insert(QStringLiteral("checkedUtc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+                    entry.insert(QStringLiteral("refreshFailed"), false);
+                    entry.insert(QStringLiteral("owner"), match.sourceOwner);
+                    entry.insert(QStringLiteral("repo"), match.sourceRepo);
+                    entry.insert(QStringLiteral("path"), match.sourcePath);
+                    accepted = true;
+                }
+            }
+        }
+        if (!accepted)
+            entry.insert(QStringLiteral("refreshFailed"), true);
+        m_renoDxRevisionCache.insert(sourceKey, entry);
+        saveRenoDxRevisionCache();
+        emit catalogChanged();
+        reply->deleteLater();
+        if (done)
+            done();
+    });
+}
+
 QVariantMap RenoDxCatalogService::renoDxSnapshotInfo(const QString &gameName) const {
     const auto match = RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries);
     QVariantMap out;
@@ -352,6 +478,11 @@ QVariantMap RenoDxCatalogService::renoDxSnapshotInfo(const QString &gameName) co
     out.insert(QStringLiteral("method"), RenoDxTitleMatcher::methodDisplayName(match.method));
     out.insert(QStringLiteral("exact"), match.exact());
     out.insert(QStringLiteral("requiresConfirmation"), match.requiresConfirmation());
+    out.insert(QStringLiteral("sourceOwner"), match.sourceOwner);
+    out.insert(QStringLiteral("sourceRepo"), match.sourceRepo);
+    out.insert(QStringLiteral("sourcePath"), match.sourcePath);
+    out.insert(QStringLiteral("sourceKey"), match.sourceKey());
+    out.insert(QStringLiteral("sourceRevision"), renoDxSourceRevision(gameName));
     return out;
 }
 
