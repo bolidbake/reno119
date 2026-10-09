@@ -284,6 +284,8 @@ QVariantMap InstallerManager::evaluateUpdateInfo(const GameInfo &game, const QJs
     info[QStringLiteral("desiredRenoDxUrl")] = desiredReno;
     info[QStringLiteral("currentRenoDxSourceKey")] = renoDxTarget.sourceKey;
     info[QStringLiteral("currentRenoDxRevision")] = renoDxTarget.sourceRevision;
+    info[QStringLiteral("currentRenoDxRevisionFresh")] =
+        renoDxCatalogInfo.value(QStringLiteral("sourceRevisionFresh")).toBool();
     info[QStringLiteral("latestReFrameworkVersion")] = latestReFramework;
     info[QStringLiteral("latestReFrameworkUrl")] = m_latestReFrameworkUrl;
     info[QStringLiteral("latestReFrameworkPublishedUtc")] = m_latestReFrameworkPublishedUtc;
@@ -735,6 +737,9 @@ QVariantList InstallerManager::updateCenterItems() const {
         const QString name = QFileInfo(url.path()).fileName();
         return name.isEmpty() ? value : name;
     };
+    const auto shortRevision = [](const QString &value) {
+        return value.size() > 10 ? value.left(10) : value;
+    };
 
     for (int row = 0; row < m_games->rowCount(); ++row) {
         const auto *game = m_games->game(row);
@@ -788,11 +793,18 @@ QVariantList InstallerManager::updateCenterItems() const {
             QString installed = shortUrlName(info.value(QStringLiteral("installedRenoDxUrl")).toString());
             if (installed.isEmpty())
                 installed = game->renodxFile.isEmpty() ? QStringLiteral("Detected") : game->renodxFile;
+            const QString installedRevision = info.value(QStringLiteral("installedRenoDxRevision")).toString();
+            if (!installedRevision.isEmpty())
+                installed += QStringLiteral(" @ ") + shortRevision(installedRevision);
+            QString available = shortUrlName(info.value(QStringLiteral("desiredRenoDxUrl")).toString());
+            const QString currentRevision = info.value(QStringLiteral("currentRenoDxRevision")).toString();
+            if (!currentRevision.isEmpty())
+                available += QStringLiteral(" @ ") + shortRevision(currentRevision);
             components << QVariantMap{
                 {QStringLiteral("id"), QStringLiteral("renodx")},
                 {QStringLiteral("name"), QStringLiteral("RenoDX")},
                 {QStringLiteral("installed"), installed},
-                {QStringLiteral("available"), shortUrlName(info.value(QStringLiteral("desiredRenoDxUrl")).toString())},
+                {QStringLiteral("available"), available},
                 {QStringLiteral("managed"), game->renodxManaged},
                 {QStringLiteral("external"), game->renodxExternal},
                 {QStringLiteral("updateDetected"), detected},
@@ -857,7 +869,12 @@ QVariantList InstallerManager::updateCenterItems() const {
             auto component = value.toMap();
             const auto id = component.value(QStringLiteral("id")).toString();
             bool old = false;
-            if (id == QStringLiteral("renodx")) old = !m_catalog || m_catalog->catalogStale();
+            if (id == QStringLiteral("renodx")) {
+                const QVariantMap renoInfo = m_updateInfo.value(game->appId);
+                const bool revisionTracked = !renoInfo.value(QStringLiteral("currentRenoDxSourceKey")).toString().isEmpty();
+                const bool revisionFresh = renoInfo.value(QStringLiteral("currentRenoDxRevisionFresh")).toBool();
+                old = !m_catalog || m_catalog->catalogStale() || (revisionTracked && !revisionFresh);
+            }
             if (id == QStringLiteral("reframework")) old = !releaseCacheFresh(QStringLiteral("REFramework"));
             if (id == QStringLiteral("optiscaler")) old = !releaseCacheFresh(QStringLiteral("OptiScaler"));
             if (id == QStringLiteral("reshade")) {
