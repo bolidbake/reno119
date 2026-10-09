@@ -451,7 +451,7 @@ QSet<QString> updateSourcesForGames(const QVector<GameInfo> &games) {
                                         (game.reshade64Managed && game.reshade64Channel == QStringLiteral("recommended"));
         if (directExternalReShade || latestReShade)
             sources.insert(QStringLiteral("ReShade"));
-        if (recommendedReShade || game.renodxManaged)
+        if (recommendedReShade || game.renodxInstalled)
             sources.insert(QStringLiteral("catalog"));
         if (game.reframeworkInstalled)
             sources.insert(QStringLiteral("REFramework"));
@@ -460,6 +460,55 @@ QSet<QString> updateSourcesForGames(const QVector<GameInfo> &games) {
     }
     return sources;
 }
+}
+
+void InstallerManager::refreshRenoDxRevisionsForGames(const QVector<GameInfo> &games,
+                                                       bool forceRefresh,
+                                                       std::function<void()> done) {
+    if (!m_catalog) {
+        if (done)
+            done();
+        return;
+    }
+
+    auto names = QSharedPointer<QStringList>::create();
+    QSet<QString> seenSources;
+    for (const GameInfo &game : games) {
+        if (!game.renodxInstalled)
+            continue;
+        const QVariantMap match = m_catalog->renoDxSnapshotInfo(game.name);
+        const QString sourceKey = match.value(QStringLiteral("sourceKey")).toString();
+        if (match.value(QStringLiteral("url")).toString().isEmpty() || sourceKey.isEmpty() ||
+            seenSources.contains(sourceKey))
+            continue;
+        seenSources.insert(sourceKey);
+        names->append(game.name);
+    }
+
+    if (names->isEmpty()) {
+        if (done)
+            done();
+        return;
+    }
+
+    auto index = QSharedPointer<int>::create(0);
+    auto step = QSharedPointer<std::function<void()>>::create();
+    *step = [this, names, index, step, forceRefresh, done = std::move(done)]() mutable {
+        if (*index >= names->size()) {
+            auto finished = std::move(done);
+            *step = {};
+            if (finished)
+                finished();
+            return;
+        }
+
+        const QString gameName = names->at((*index)++);
+        m_catalog->refreshRenoDxSourceRevision(gameName, forceRefresh, [step] {
+            if (*step)
+                (*step)();
+        });
+    };
+    (*step)();
 }
 
 void InstallerManager::checkUpdates(int row) {
@@ -479,15 +528,18 @@ void InstallerManager::checkUpdates(int row) {
     const QJsonObject state = readStateForGame(game);
     setStatus(QStringLiteral("Checking update status for %1...").arg(game.name));
     fetchLatestVersions([this, game, state](const QString &latestReShade, const QString &latestReFramework) {
-        const QVariantMap info = evaluateUpdateInfo(game, state, latestReShade, latestReFramework);
-        recordUpdateInfo(game.appId, info);
-        if (m_games) {
-            m_games->setUpdateStatus(game.appId, true,
-                                     info.value(QStringLiteral("reshadeUpdateAvailable")).toBool(),
-                                     info.value(QStringLiteral("renodxUpdateAvailable")).toBool(),
-                                     info.value(QStringLiteral("reframeworkUpdateAvailable")).toBool());
-        }
-        setStatus(QStringLiteral("Finished checking updates for %1.").arg(game.name));
+        refreshRenoDxRevisionsForGames(QVector<GameInfo>{game}, false,
+            [this, game, state, latestReShade, latestReFramework] {
+                const QVariantMap info = evaluateUpdateInfo(game, state, latestReShade, latestReFramework);
+                recordUpdateInfo(game.appId, info);
+                if (m_games) {
+                    m_games->setUpdateStatus(game.appId, true,
+                                             info.value(QStringLiteral("reshadeUpdateAvailable")).toBool(),
+                                             info.value(QStringLiteral("renodxUpdateAvailable")).toBool(),
+                                             info.value(QStringLiteral("reframeworkUpdateAvailable")).toBool());
+                }
+                setStatus(QStringLiteral("Finished checking updates for %1.").arg(game.name));
+            });
     });
 }
 
@@ -581,7 +633,10 @@ void InstallerManager::checkAllUpdates(bool forceRefresh) {
                     ++state->unresolvedComponents;
                 if (game.reframeworkManaged && state->latestReFramework.isEmpty())
                     ++state->unresolvedComponents;
-                if (game.renodxManaged && info.value(QStringLiteral("desiredRenoDxUrl")).toString().isEmpty())
+                if (game.renodxManaged &&
+                    (info.value(QStringLiteral("desiredRenoDxUrl")).toString().isEmpty() ||
+                     info.value(QStringLiteral("renodxComparisonUnknown")).toBool() ||
+                     info.value(QStringLiteral("renodxReviewRequired")).toBool()))
                     ++state->unresolvedComponents;
 
                 ++m_bulkUpdateChecked;
@@ -636,8 +691,11 @@ void InstallerManager::checkAllUpdates(bool forceRefresh) {
         runPass(candidates, QString(), QString(), true, {});
         return;
     }
-    fetchLatestVersions([candidates, runPass](const QString &reshade, const QString &ref) {
-        runPass(candidates, reshade, ref, true, {});
+    fetchLatestVersions([this, candidates, runPass, forceRefresh](const QString &reshade, const QString &ref) {
+        refreshRenoDxRevisionsForGames(candidates, forceRefresh,
+            [candidates, runPass, reshade, ref] {
+                runPass(candidates, reshade, ref, true, {});
+            });
     }, forceRefresh, requiredSources);
 }
 
