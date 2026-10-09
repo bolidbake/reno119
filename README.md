@@ -21,7 +21,7 @@ It discovers games from Steam, Heroic, Lutris, and custom entries, checks what e
 
 ## Current version
 
-**0.23.5**
+**0.23.6**
 
 ## Requirements
 
@@ -60,7 +60,7 @@ sudo cmake --install build
 
 This installs the Reno119 executable, desktop launcher, and bundled theme/template support files.
 
-An Arch/CachyOS `PKGBUILD` is also included under `packaging/arch/`. It is ready to use once a matching `v0.23.5` Git tag exists.
+An Arch/CachyOS `PKGBUILD` is also included under `packaging/arch/`. It is ready to use once a matching `v0.23.6` Git tag exists.
 
 ## Noctalia v5 theming
 
