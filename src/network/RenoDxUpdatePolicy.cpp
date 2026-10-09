@@ -74,7 +74,8 @@ RenoDxUpdateDecision RenoDxUpdatePolicy::evaluate(bool installed,
     }
 
     if (current.catalogMatched && current.exact &&
-        !current.sourceKey.isEmpty() && current.sourceRevision.isEmpty()) {
+        ((!current.sourceKey.isEmpty() && current.sourceRevision.isEmpty()) ||
+         (current.sourceKey.isEmpty() && !urlChanged))) {
         decision.comparisonUnknown = true;
     }
 
