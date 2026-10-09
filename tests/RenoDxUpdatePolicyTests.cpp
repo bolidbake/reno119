@@ -104,6 +104,21 @@ private slots:
         QVERIFY(decision.catalogMissing);
     }
 
+    void legacyDedicatedInstallDoesNotDowngradeToGeneric() {
+        RenoDxUpdateTarget current;
+        const auto decision = RenoDxUpdatePolicy::evaluate(
+            true, true, false,
+            QStringLiteral("https://example.invalid/old-dedicated.addon64"),
+            QString(),
+            QString(),
+            current,
+            QStringLiteral("https://example.invalid/generic-ue.addon64"));
+
+        QVERIFY(!decision.updateDetected);
+        QVERIFY(!decision.updateAvailable);
+        QVERIFY(decision.catalogMissing);
+    }
+
     void legacyManagedInstallRequestsOneRefresh() {
         RenoDxUpdateTarget current;
         current.url = QStringLiteral("https://example.invalid/game.addon64");
