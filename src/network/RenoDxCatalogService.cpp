@@ -14,6 +14,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
+#include <utility>
 
 namespace {
 constexpr auto kRenoDxWikiUrl = "https://raw.githubusercontent.com/wiki/clshortfuse/renodx/Mods.md";
