@@ -22,6 +22,11 @@ RenoDxUpdateDecision RenoDxUpdatePolicy::evaluate(bool installed,
     if (!installed)
         return decision;
 
+    if (!current.catalogMatched && !installedSourceKey.isEmpty()) {
+        decision.catalogMissing = true;
+        return decision;
+    }
+
     const QString desiredUrl = current.catalogMatched ? current.url : fallbackDesiredUrl;
     decision.targetIdentity = targetIdentityFor(current, desiredUrl);
 
