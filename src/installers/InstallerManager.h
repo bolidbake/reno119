@@ -154,7 +154,8 @@ private:
     void installCustomReShade(int row);
     bool extractReShade(const QString &installerPath, const QString &outputDir, QString &error);
     void beginRenoDxInstall(int row, bool allowExternalOverwrite, const QString &confirmedNonExactUrl);
-    void downloadRenoDx(int row, const QUrl &url, bool allowExternalOverwrite);
+    void downloadRenoDx(int row, const QUrl &url, bool allowExternalOverwrite,
+                        const QString &sourceKey, const QString &sourceRevision);
     void beginReFrameworkInstall(int row, bool allowExternalOverwrite);
     void downloadReFramework(int row, const QString &version, const QUrl &url, const QString &takeoverBackup);
     bool extractReFramework(const QString &archivePath, const QString &outputDir, QString &error);
@@ -173,6 +174,8 @@ private:
     QJsonObject readStateForGame(const GameInfo &game) const;
     QVariantMap evaluateUpdateInfo(const GameInfo &game, const QJsonObject &state,
                                    const QString &latestReShade, const QString &latestReFramework) const;
+    void refreshRenoDxRevisionsForGames(const QVector<GameInfo> &games, bool forceRefresh,
+                                        std::function<void()> done);
     void fetchLatestVersions(std::function<void(const QString &, const QString &)> done,
                              bool forceRefresh = false,
                              const QSet<QString> &requiredSources = {});
