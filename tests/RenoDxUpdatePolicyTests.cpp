@@ -96,7 +96,8 @@ private slots:
             QStringLiteral("https://example.invalid/old.addon64"),
             QStringLiteral("owner/repo:src/games/old"),
             QStringLiteral("old-revision"),
-            current);
+            current,
+            QStringLiteral("https://example.invalid/generic-ue.addon64"));
 
         QVERIFY(!decision.updateDetected);
         QVERIFY(!decision.updateAvailable);
