@@ -54,6 +54,9 @@ RenoDxTitleMatch RenoDxTitleMatcher::resolve(const QString &gameName, const QVec
         if (normalizeGameName(entry.title) == fullKey) {
             result.title = cleanDisplayTitle(entry.title);
             result.url = entry.url;
+            result.sourceOwner = entry.sourceOwner;
+            result.sourceRepo = entry.sourceRepo;
+            result.sourcePath = entry.sourcePath;
             result.method = RenoDxTitleMatch::Method::ExactTitle;
             return result;
         }
@@ -65,6 +68,9 @@ RenoDxTitleMatch RenoDxTitleMatcher::resolve(const QString &gameName, const QVec
             if (normalizeGameName(entry.title) == baseKey) {
                 result.title = cleanDisplayTitle(entry.title);
                 result.url = entry.url;
+                result.sourceOwner = entry.sourceOwner;
+                result.sourceRepo = entry.sourceRepo;
+                result.sourcePath = entry.sourcePath;
                 result.method = RenoDxTitleMatch::Method::SubtitleExact;
                 return result;
             }
@@ -94,6 +100,9 @@ RenoDxTitleMatch RenoDxTitleMatcher::resolve(const QString &gameName, const QVec
     if (bestIndex >= 0 && !ambiguous) {
         result.title = cleanDisplayTitle(entries.at(bestIndex).title);
         result.url = entries.at(bestIndex).url;
+        result.sourceOwner = entries.at(bestIndex).sourceOwner;
+        result.sourceRepo = entries.at(bestIndex).sourceRepo;
+        result.sourcePath = entries.at(bestIndex).sourcePath;
         result.method = RenoDxTitleMatch::Method::Prefix;
     }
     return result;
