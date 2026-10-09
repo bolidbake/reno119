@@ -22,7 +22,9 @@ RenoDxUpdateDecision RenoDxUpdatePolicy::evaluate(bool installed,
     if (!installed)
         return decision;
 
-    if (!current.catalogMatched && !installedSourceKey.isEmpty()) {
+    if (!current.catalogMatched &&
+        (!installedSourceKey.isEmpty() ||
+         (!installedUrl.isEmpty() && !fallbackDesiredUrl.isEmpty() && installedUrl != fallbackDesiredUrl))) {
         decision.catalogMissing = true;
         return decision;
     }
