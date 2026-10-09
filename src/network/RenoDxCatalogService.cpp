@@ -483,6 +483,9 @@ QVariantMap RenoDxCatalogService::renoDxSnapshotInfo(const QString &gameName) co
     out.insert(QStringLiteral("sourcePath"), match.sourcePath);
     out.insert(QStringLiteral("sourceKey"), match.sourceKey());
     out.insert(QStringLiteral("sourceRevision"), renoDxSourceRevision(gameName));
+    out.insert(QStringLiteral("sourceRevisionTracked"), !match.sourceKey().isEmpty());
+    out.insert(QStringLiteral("sourceRevisionFresh"),
+               !match.sourceKey().isEmpty() && renoDxRevisionCacheFresh(match.sourceKey()));
     return out;
 }
 
