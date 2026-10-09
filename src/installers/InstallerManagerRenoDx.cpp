@@ -124,17 +124,54 @@ void InstallerManager::beginRenoDxInstall(int row, bool allowExternalOverwrite, 
 
     const QString chosenFile = QFileInfo(QUrl(url).path()).fileName();
     setRenoDxStatus(row, chosenFile.isEmpty()
-        ? QStringLiteral("Matched a RenoDX addon. Starting download...")
+        ? QStringLiteral("Matched a RenoDX addon.")
         : QStringLiteral("Matched RenoDX addon: %1").arg(chosenFile));
 
-    const QString backupDir = createBackup(row, QStringLiteral("before-renodx-install"));
-    if (!backupDir.isEmpty())
-        writeState(row, {{"lastBackupDir", backupDir}});
-    setBusy(true); setProgress(0.05); setStatus("Downloading RenoDX addon...");
-    downloadRenoDx(row, QUrl(url), allowExternalOverwrite);
+    const QString gameId = g->appId;
+    const QString gameName = g->name;
+    const QString selectedExe = g->exePath;
+    setBusy(true);
+    setProgress(0.02);
+
+    auto startDownload = [this, row, allowExternalOverwrite, url, gameId, gameName, selectedExe]() {
+        const auto *current = m_games ? m_games->game(row) : nullptr;
+        if (!current || current->appId != gameId || current->exePath != selectedExe) {
+            setRenoDxStatus(row, QStringLiteral("The selected game changed while resolving RenoDX metadata. Retry the installation."));
+            setStatus(QStringLiteral("The selected game changed while resolving RenoDX metadata. Retry the installation."));
+            setBusy(false);
+            return;
+        }
+
+        QString sourceKey;
+        QString sourceRevision;
+        if (m_catalog) {
+            const QVariantMap refreshedMatch = m_catalog->renoDxSnapshotInfo(gameName);
+            if (refreshedMatch.value(QStringLiteral("url")).toString() == url) {
+                sourceKey = refreshedMatch.value(QStringLiteral("sourceKey")).toString();
+                sourceRevision = refreshedMatch.value(QStringLiteral("sourceRevision")).toString();
+            }
+        }
+
+        const QString backupDir = createBackup(row, QStringLiteral("before-renodx-install"));
+        if (!backupDir.isEmpty())
+            writeState(row, {{"lastBackupDir", backupDir}});
+        setProgress(0.05);
+        setStatus(QStringLiteral("Downloading RenoDX addon..."));
+        downloadRenoDx(row, QUrl(url), allowExternalOverwrite, sourceKey, sourceRevision);
+    };
+
+    const QString sourceKey = catalogMatch.value(QStringLiteral("sourceKey")).toString();
+    if (dedicatedMatch && m_catalog && !sourceKey.isEmpty()) {
+        setStatus(QStringLiteral("Checking the game-specific RenoDX source revision..."));
+        m_catalog->refreshRenoDxSourceRevision(gameName, false, std::move(startDownload));
+        return;
+    }
+
+    startDownload();
 }
 
-void InstallerManager::downloadRenoDx(int row, const QUrl &url, bool allowExternalOverwrite) {
+void InstallerManager::downloadRenoDx(int row, const QUrl &url, bool allowExternalOverwrite,
+                                      const QString &sourceKey, const QString &sourceRevision) {
     const auto *g = m_games->game(row); if (!g) { setBusy(false); return; }
     auto report = [this, row](const QString &text) {
         setRenoDxStatus(row, text);
@@ -181,7 +218,7 @@ void InstallerManager::downloadRenoDx(int row, const QUrl &url, bool allowExtern
     connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 done, qint64 total) {
         if (total > 0) setProgress(0.08 + 0.82 * (double(done) / double(total)));
     });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, bytes, row, fileName, url, allowExternalOverwrite, gameId, selectedExe, targets, beforeDownload, externalNames] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, bytes, row, fileName, url, allowExternalOverwrite, gameId, selectedExe, targets, beforeDownload, externalNames, sourceKey, sourceRevision] {
         bytes->append(reply->readAll());
         auto reportFinished = [this, row](const QString &text) {
             setRenoDxStatus(row, text);
@@ -247,7 +284,13 @@ void InstallerManager::downloadRenoDx(int row, const QUrl &url, bool allowExtern
             }
         }
         if (!ensureReShadeIni(exeDir)) { fail("Could not configure the ReShade addon directory."); return; }
-        if (!writeState(row, {{"renodxFile", fileName}, {"renodxUrl", url.toString()}})) {
+        QJsonObject statePatch{{QStringLiteral("renodxFile"), fileName},
+                               {QStringLiteral("renodxUrl"), url.toString()}};
+        statePatch.insert(QStringLiteral("renodxSourceKey"),
+                          sourceKey.isEmpty() ? QJsonValue() : QJsonValue(sourceKey));
+        statePatch.insert(QStringLiteral("renodxSourceRevision"),
+                          sourceRevision.isEmpty() ? QJsonValue() : QJsonValue(sourceRevision));
+        if (!writeState(row, statePatch)) {
             fail("Could not save RenoDX ownership metadata."); return;
         }
         m_games->refreshInstallState(row);
@@ -285,7 +328,10 @@ void InstallerManager::uninstallRenoDx(int row) {
         return;
     }
     const bool tweaksManaged = !state.value(QStringLiteral("renoDxTweakSnapshotDir")).toString().isEmpty();
-    writeState(row, {{"renodxFile", QJsonValue()}, {"renodxUrl", QJsonValue()}});
+    writeState(row, {{"renodxFile", QJsonValue()},
+                     {"renodxUrl", QJsonValue()},
+                     {"renodxSourceKey", QJsonValue()},
+                     {"renodxSourceRevision", QJsonValue()}});
     m_games->refreshInstallState(row);
     report("Removed Reno119-managed RenoDX addon: " + ownedAddon +
            (tweaksManaged ? QStringLiteral(". Managed Engine.ini/ReShade.ini tweaks were preserved; use Restore original if you want to undo them.") : QString()));

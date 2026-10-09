@@ -3,11 +3,13 @@
 #include <QObject>
 #include <QDateTime>
 #include <QHash>
+#include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QSet>
 #include <QStringList>
 #include <QVariantMap>
 #include "RenoDxTitleMatcher.h"
+#include <functional>
 
 class RenoDxCatalogService : public QObject {
     Q_OBJECT
@@ -35,6 +37,8 @@ public:
 
     QString renoDxSnapshot(const QString &gameName) const;
     QVariantMap renoDxSnapshotInfo(const QString &gameName) const;
+    QString renoDxSourceRevision(const QString &gameName) const;
+    void refreshRenoDxSourceRevision(const QString &gameName, bool forceRefresh, std::function<void()> done);
     QString recommendedReShadeVersion(const QString &gameName = QString()) const;
 
     QVariantMap rhiRenoDxIniOverrides(const QString &gameName) const;
@@ -54,6 +58,9 @@ private:
     void fetchRhiEngineIniProfile(const QString &normalizedGameKey, const QString &fileName);
     void loadRhiCache();
     void saveRhiCache() const;
+    void loadRenoDxRevisionCache();
+    void saveRenoDxRevisionCache() const;
+    bool renoDxRevisionCacheFresh(const QString &sourceKey) const;
     void refreshRhiManifest(bool forceRefresh = false);
     bool rhiCacheFresh() const;
 
@@ -69,6 +76,7 @@ private:
     bool m_rhiRefreshing = false;
     QVector<RenoDxCatalogEntry> m_renoDxEntries;
     QString m_renoDxRecommendedReShade;
+    QJsonObject m_renoDxRevisionCache;
     QByteArray m_rhiManifestJson;
 
     QHash<QString, QVariantMap> m_rhiRenoDxIniOverrides;

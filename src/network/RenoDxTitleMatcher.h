@@ -6,6 +6,16 @@
 struct RenoDxCatalogEntry {
     QString title;
     QString url;
+    QString sourceOwner;
+    QString sourceRepo;
+    QString sourcePath;
+
+    QString sourceKey() const {
+        if (sourceOwner.isEmpty() || sourceRepo.isEmpty())
+            return {};
+        return sourceOwner + QStringLiteral("/") + sourceRepo +
+               (sourcePath.isEmpty() ? QString() : QStringLiteral(":") + sourcePath);
+    }
 };
 
 struct RenoDxTitleMatch {
@@ -18,7 +28,17 @@ struct RenoDxTitleMatch {
 
     QString title;
     QString url;
+    QString sourceOwner;
+    QString sourceRepo;
+    QString sourcePath;
     Method method = Method::None;
+
+    QString sourceKey() const {
+        if (sourceOwner.isEmpty() || sourceRepo.isEmpty())
+            return {};
+        return sourceOwner + QStringLiteral("/") + sourceRepo +
+               (sourcePath.isEmpty() ? QString() : QStringLiteral(":") + sourcePath);
+    }
 
     bool matched() const { return !url.isEmpty() && method != Method::None; }
     bool exact() const { return method == Method::ExactTitle; }

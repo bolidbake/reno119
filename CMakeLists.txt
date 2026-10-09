@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(reno119 VERSION 0.23.5 LANGUAGES CXX)
+project(reno119 VERSION 0.23.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,6 +56,8 @@ qt_add_executable(reno119
     src/network/RenoDxCatalogService.cpp
     src/network/RenoDxTitleMatcher.h
     src/network/RenoDxTitleMatcher.cpp
+    src/network/RenoDxUpdatePolicy.h
+    src/network/RenoDxUpdatePolicy.cpp
     src/network/CoverService.h
     src/network/CoverService.cpp
     src/network/PCGamingWikiService.h
@@ -151,6 +153,15 @@ if(RENO119_BUILD_TESTS)
     target_include_directories(reno119_renodx_matcher_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(reno119_renodx_matcher_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME reno119_renodx_matcher_tests COMMAND reno119_renodx_matcher_tests)
+
+    qt_add_executable(reno119_renodx_update_policy_tests
+        tests/RenoDxUpdatePolicyTests.cpp
+        src/network/RenoDxUpdatePolicy.h
+        src/network/RenoDxUpdatePolicy.cpp
+    )
+    target_include_directories(reno119_renodx_update_policy_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(reno119_renodx_update_policy_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME reno119_renodx_update_policy_tests COMMAND reno119_renodx_update_policy_tests)
 
     qt_add_executable(reno119_game_model_update_tests
         tests/GameModelUpdateStatusTests.cpp

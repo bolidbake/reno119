@@ -1,3 +1,8 @@
 build/
+build-tests/
 .cache/
 *.user
+*.pkg.tar.zst
+*.tar.zst
+srcpkg/
+pkg/

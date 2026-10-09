@@ -1,6 +1,6 @@
 # Maintainer: bolidbake
 pkgname=reno119
-pkgver=0.23.5
+pkgver=0.23.6
 pkgrel=1
 pkgdesc='No-hassle RenoDX HDR setup for Linux gaming'
 arch=('x86_64')

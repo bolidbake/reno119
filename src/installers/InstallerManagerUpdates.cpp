@@ -3,6 +3,7 @@
 #include "../core/AppSettings.h"
 #include "../core/GameModel.h"
 #include "../network/RenoDxCatalogService.h"
+#include "../network/RenoDxUpdatePolicy.h"
 
 #include <QClipboard>
 #include <QCryptographicHash>
@@ -195,7 +196,28 @@ QVariantMap InstallerManager::evaluateUpdateInfo(const GameInfo &game, const QJs
     const bool anyReShadeManaged = game.reshadeManaged || game.reshade64Managed;
     const QString recommended = m_catalog ? m_catalog->recommendedReShadeVersion(game.name) : QString();
     const QString installedRenoDxUrl = state.value(QStringLiteral("renodxUrl")).toString();
+    const QString installedRenoDxSourceKey = state.value(QStringLiteral("renodxSourceKey")).toString();
+    const QString installedRenoDxRevision = state.value(QStringLiteral("renodxSourceRevision")).toString();
     const QString desiredReno = desiredRenoDxUrlForGame(game);
+    const QVariantMap renoDxCatalogInfo = m_catalog ? m_catalog->renoDxSnapshotInfo(game.name) : QVariantMap{};
+    const QString catalogUrl = renoDxCatalogInfo.value(QStringLiteral("url")).toString();
+    const bool dedicatedCatalogMatch = !catalogUrl.isEmpty() && catalogUrl == desiredReno;
+    RenoDxUpdateTarget renoDxTarget;
+    renoDxTarget.url = catalogUrl;
+    renoDxTarget.sourceKey = renoDxCatalogInfo.value(QStringLiteral("sourceKey")).toString();
+    renoDxTarget.sourceRevision = renoDxCatalogInfo.value(QStringLiteral("sourceRevision")).toString();
+    renoDxTarget.catalogMatched = dedicatedCatalogMatch;
+    renoDxTarget.exact = renoDxCatalogInfo.value(QStringLiteral("exact")).toBool();
+    renoDxTarget.requiresConfirmation = renoDxCatalogInfo.value(QStringLiteral("requiresConfirmation")).toBool();
+    const RenoDxUpdateDecision renoDecision = RenoDxUpdatePolicy::evaluate(
+        game.renodxInstalled,
+        game.renodxManaged,
+        game.renodxExternal,
+        installedRenoDxUrl,
+        installedRenoDxSourceKey,
+        installedRenoDxRevision,
+        renoDxTarget,
+        dedicatedCatalogMatch ? QString() : desiredReno);
 
     const auto layoutNeedsUpdate = [&recommended, &latestReShade](bool managed, const QString &channel, const QString &version) {
         if (!managed)
@@ -222,7 +244,7 @@ QVariantMap InstallerManager::evaluateUpdateInfo(const GameInfo &game, const QJs
     reShadeTargets.removeDuplicates();
     const QString reshadeTarget = reShadeTargets.join(QStringLiteral(" + "));
 
-    const bool renoUpdateDetected = game.renodxManaged && !desiredReno.isEmpty() && installedRenoDxUrl != desiredReno;
+    const bool renoUpdateDetected = renoDecision.updateDetected;
     const bool reframeworkUpdateDetected = game.reframeworkManaged && !latestReFramework.isEmpty() &&
                                            game.reframeworkVersion != latestReFramework;
 
@@ -232,14 +254,14 @@ QVariantMap InstallerManager::evaluateUpdateInfo(const GameInfo &game, const QJs
     const QString skippedOptiScaler = m_settings ? m_settings->skippedUpdateTarget(game.appId, QStringLiteral("optiscaler")) : QString();
 
     const bool reshadeSkipped = !reshadeTarget.isEmpty() && skippedReShade == reshadeTarget;
-    const bool renodxSkipped = !desiredReno.isEmpty() && skippedRenoDx == desiredReno;
+    const bool renodxSkipped = !renoDecision.targetIdentity.isEmpty() && skippedRenoDx == renoDecision.targetIdentity;
     const bool reframeworkSkipped = !latestReFramework.isEmpty() && skippedReFramework == latestReFramework;
     const bool optiScalerSkipped = !m_latestOptiScalerVersion.isEmpty() && skippedOptiScaler == m_latestOptiScalerVersion;
 
     const bool directReShadeUpdate = directReShadeUpdateDetected && !reshadeSkipped;
     const bool reShade64Update = reShade64UpdateDetected && !reshadeSkipped;
     const bool reshadeUpdateAvailable = directReShadeUpdate || reShade64Update;
-    const bool renoUpdateAvailable = renoUpdateDetected && !renodxSkipped;
+    const bool renoUpdateAvailable = renoDecision.updateAvailable && !renodxSkipped;
     const bool reframeworkUpdateAvailable = reframeworkUpdateDetected && !reframeworkSkipped;
 
     QString installedReShadeVersion;
@@ -257,7 +279,13 @@ QVariantMap InstallerManager::evaluateUpdateInfo(const GameInfo &game, const QJs
     info[QStringLiteral("recommendedReShadeVersion")] = recommended;
     info[QStringLiteral("latestReShadeVersion")] = latestReShade;
     info[QStringLiteral("installedRenoDxUrl")] = installedRenoDxUrl;
+    info[QStringLiteral("installedRenoDxSourceKey")] = installedRenoDxSourceKey;
+    info[QStringLiteral("installedRenoDxRevision")] = installedRenoDxRevision;
     info[QStringLiteral("desiredRenoDxUrl")] = desiredReno;
+    info[QStringLiteral("currentRenoDxSourceKey")] = renoDxTarget.sourceKey;
+    info[QStringLiteral("currentRenoDxRevision")] = renoDxTarget.sourceRevision;
+    info[QStringLiteral("currentRenoDxRevisionFresh")] =
+        renoDxCatalogInfo.value(QStringLiteral("sourceRevisionFresh")).toBool();
     info[QStringLiteral("latestReFrameworkVersion")] = latestReFramework;
     info[QStringLiteral("latestReFrameworkUrl")] = m_latestReFrameworkUrl;
     info[QStringLiteral("latestReFrameworkPublishedUtc")] = m_latestReFrameworkPublishedUtc;
@@ -265,13 +293,18 @@ QVariantMap InstallerManager::evaluateUpdateInfo(const GameInfo &game, const QJs
     info[QStringLiteral("latestOptiScalerUrl")] = m_latestOptiScalerUrl;
     info[QStringLiteral("latestOptiScalerPublishedUtc")] = m_latestOptiScalerPublishedUtc;
     info[QStringLiteral("reshadeTarget")] = reshadeTarget;
-    info[QStringLiteral("renodxTarget")] = desiredReno;
+    info[QStringLiteral("renodxTarget")] = renoDecision.targetIdentity;
     info[QStringLiteral("reframeworkTarget")] = latestReFramework;
     info[QStringLiteral("optiscalerTarget")] = m_latestOptiScalerVersion;
     info[QStringLiteral("directReShadeUpdateDetected")] = directReShadeUpdateDetected;
     info[QStringLiteral("reShade64UpdateDetected")] = reShade64UpdateDetected;
     info[QStringLiteral("reshadeUpdateDetected")] = directReShadeUpdateDetected || reShade64UpdateDetected;
     info[QStringLiteral("renodxUpdateDetected")] = renoUpdateDetected;
+    info[QStringLiteral("renodxReviewRequired")] = renoDecision.reviewRequired;
+    info[QStringLiteral("renodxTakeoverSuggested")] = renoDecision.takeoverSuggested;
+    info[QStringLiteral("renodxComparisonUnknown")] = renoDecision.comparisonUnknown;
+    info[QStringLiteral("renodxLegacyRefreshRequired")] = renoDecision.legacyRefreshRequired;
+    info[QStringLiteral("renodxCatalogMissing")] = renoDecision.catalogMissing;
     info[QStringLiteral("reframeworkUpdateDetected")] = reframeworkUpdateDetected;
     info[QStringLiteral("reshadeSkipped")] = reshadeSkipped;
     info[QStringLiteral("renodxSkipped")] = renodxSkipped;
@@ -331,18 +364,43 @@ QVariantMap InstallerManager::evaluateUpdateInfo(const GameInfo &game, const QJs
     }
     info[QStringLiteral("reshadeSummary")] = reshadeSummary;
 
+    const auto shortRevision = [](const QString &revision) {
+        return revision.size() > 10 ? revision.left(10) : revision;
+    };
     QString renodxSummary;
-    if (!game.renodxInstalled)
+    if (!game.renodxInstalled) {
         renodxSummary = QStringLiteral("RenoDX not installed.");
-    else if (game.renodxExternal)
-        renodxSummary = QStringLiteral("External RenoDX detected. Update status is informational because Reno119 does not own this addon.");
-    else if (desiredReno.isEmpty())
-        renodxSummary = QStringLiteral("RenoDX installed. No comparison source is available for this title.");
-    else
-        renodxSummary = renoUpdateAvailable ? QStringLiteral("RenoDX update available or source changed.")
-                                             : QStringLiteral("RenoDX appears current.");
+    } else if (game.renodxExternal) {
+        renodxSummary = QStringLiteral("External RenoDX detected. Reno119 does not own or update this addon automatically.");
+        if (renoDecision.takeoverSuggested) {
+            renodxSummary += QStringLiteral(" A dedicated catalog source is available");
+            if (!renoDxTarget.sourceRevision.isEmpty())
+                renodxSummary += QStringLiteral(" at revision %1").arg(shortRevision(renoDxTarget.sourceRevision));
+            renodxSummary += QStringLiteral("; use Take over if you want Reno119-managed updates.");
+        }
+    } else if (renoDecision.catalogMissing) {
+        renodxSummary = QStringLiteral("Managed RenoDX is installed, but no current catalog or generic source is available for this title. The installed addon was left untouched.");
+    } else if (renoDecision.reviewRequired) {
+        renodxSummary = renoDecision.updateDetected
+            ? QStringLiteral("The RenoDX source changed, but the current catalog match is non-exact. Review the match before updating.")
+            : QStringLiteral("The current RenoDX catalog match is non-exact and remains review-only; Reno119 will not auto-update it.");
+    } else if (renoDecision.legacyRefreshRequired) {
+        renodxSummary = QStringLiteral("This managed RenoDX install predates game-specific revision tracking. Refresh it once to establish the source revision baseline.");
+    } else if (renoDecision.comparisonUnknown) {
+        renodxSummary = QStringLiteral("Managed RenoDX is installed, but the current game-specific source revision could not be resolved. Update state is unknown.");
+    } else if (renoUpdateAvailable) {
+        renodxSummary = QStringLiteral("RenoDX game-specific update available");
+        if (!renoDxTarget.sourceRevision.isEmpty())
+            renodxSummary += QStringLiteral(" (revision %1)").arg(shortRevision(renoDxTarget.sourceRevision));
+        renodxSummary += QStringLiteral(".");
+    } else {
+        renodxSummary = QStringLiteral("RenoDX appears current");
+        if (!renoDxTarget.sourceRevision.isEmpty())
+            renodxSummary += QStringLiteral(" (revision %1)").arg(shortRevision(renoDxTarget.sourceRevision));
+        renodxSummary += QStringLiteral(".");
+    }
     if (renodxSkipped)
-        renodxSummary += QStringLiteral(" This catalog target is currently skipped.");
+        renodxSummary += QStringLiteral(" This RenoDX target is currently skipped.");
     info[QStringLiteral("renodxSummary")] = renodxSummary;
 
     QString reframeworkSummary;
@@ -395,7 +453,7 @@ QSet<QString> updateSourcesForGames(const QVector<GameInfo> &games) {
                                         (game.reshade64Managed && game.reshade64Channel == QStringLiteral("recommended"));
         if (directExternalReShade || latestReShade)
             sources.insert(QStringLiteral("ReShade"));
-        if (recommendedReShade || game.renodxManaged)
+        if (recommendedReShade || game.renodxInstalled)
             sources.insert(QStringLiteral("catalog"));
         if (game.reframeworkInstalled)
             sources.insert(QStringLiteral("REFramework"));
@@ -404,6 +462,55 @@ QSet<QString> updateSourcesForGames(const QVector<GameInfo> &games) {
     }
     return sources;
 }
+}
+
+void InstallerManager::refreshRenoDxRevisionsForGames(const QVector<GameInfo> &games,
+                                                       bool forceRefresh,
+                                                       std::function<void()> done) {
+    if (!m_catalog) {
+        if (done)
+            done();
+        return;
+    }
+
+    auto names = QSharedPointer<QStringList>::create();
+    QSet<QString> seenSources;
+    for (const GameInfo &game : games) {
+        if (!game.renodxInstalled)
+            continue;
+        const QVariantMap match = m_catalog->renoDxSnapshotInfo(game.name);
+        const QString sourceKey = match.value(QStringLiteral("sourceKey")).toString();
+        if (match.value(QStringLiteral("url")).toString().isEmpty() || sourceKey.isEmpty() ||
+            seenSources.contains(sourceKey))
+            continue;
+        seenSources.insert(sourceKey);
+        names->append(game.name);
+    }
+
+    if (names->isEmpty()) {
+        if (done)
+            done();
+        return;
+    }
+
+    auto index = QSharedPointer<int>::create(0);
+    auto step = QSharedPointer<std::function<void()>>::create();
+    *step = [this, names, index, step, forceRefresh, done = std::move(done)]() mutable {
+        if (*index >= names->size()) {
+            auto finished = std::move(done);
+            *step = {};
+            if (finished)
+                finished();
+            return;
+        }
+
+        const QString gameName = names->at((*index)++);
+        m_catalog->refreshRenoDxSourceRevision(gameName, forceRefresh, [step] {
+            if (*step)
+                (*step)();
+        });
+    };
+    (*step)();
 }
 
 void InstallerManager::checkUpdates(int row) {
@@ -423,15 +530,18 @@ void InstallerManager::checkUpdates(int row) {
     const QJsonObject state = readStateForGame(game);
     setStatus(QStringLiteral("Checking update status for %1...").arg(game.name));
     fetchLatestVersions([this, game, state](const QString &latestReShade, const QString &latestReFramework) {
-        const QVariantMap info = evaluateUpdateInfo(game, state, latestReShade, latestReFramework);
-        recordUpdateInfo(game.appId, info);
-        if (m_games) {
-            m_games->setUpdateStatus(game.appId, true,
-                                     info.value(QStringLiteral("reshadeUpdateAvailable")).toBool(),
-                                     info.value(QStringLiteral("renodxUpdateAvailable")).toBool(),
-                                     info.value(QStringLiteral("reframeworkUpdateAvailable")).toBool());
-        }
-        setStatus(QStringLiteral("Finished checking updates for %1.").arg(game.name));
+        refreshRenoDxRevisionsForGames(QVector<GameInfo>{game}, false,
+            [this, game, state, latestReShade, latestReFramework] {
+                const QVariantMap info = evaluateUpdateInfo(game, state, latestReShade, latestReFramework);
+                recordUpdateInfo(game.appId, info);
+                if (m_games) {
+                    m_games->setUpdateStatus(game.appId, true,
+                                             info.value(QStringLiteral("reshadeUpdateAvailable")).toBool(),
+                                             info.value(QStringLiteral("renodxUpdateAvailable")).toBool(),
+                                             info.value(QStringLiteral("reframeworkUpdateAvailable")).toBool());
+                }
+                setStatus(QStringLiteral("Finished checking updates for %1.").arg(game.name));
+            });
     });
 }
 
@@ -525,7 +635,10 @@ void InstallerManager::checkAllUpdates(bool forceRefresh) {
                     ++state->unresolvedComponents;
                 if (game.reframeworkManaged && state->latestReFramework.isEmpty())
                     ++state->unresolvedComponents;
-                if (game.renodxManaged && info.value(QStringLiteral("desiredRenoDxUrl")).toString().isEmpty())
+                if (game.renodxManaged &&
+                    (info.value(QStringLiteral("desiredRenoDxUrl")).toString().isEmpty() ||
+                     info.value(QStringLiteral("renodxComparisonUnknown")).toBool() ||
+                     info.value(QStringLiteral("renodxReviewRequired")).toBool()))
                     ++state->unresolvedComponents;
 
                 ++m_bulkUpdateChecked;
@@ -580,8 +693,11 @@ void InstallerManager::checkAllUpdates(bool forceRefresh) {
         runPass(candidates, QString(), QString(), true, {});
         return;
     }
-    fetchLatestVersions([candidates, runPass](const QString &reshade, const QString &ref) {
-        runPass(candidates, reshade, ref, true, {});
+    fetchLatestVersions([this, candidates, runPass, forceRefresh](const QString &reshade, const QString &ref) {
+        refreshRenoDxRevisionsForGames(candidates, forceRefresh,
+            [candidates, runPass, reshade, ref] {
+                runPass(candidates, reshade, ref, true, {});
+            });
     }, forceRefresh, requiredSources);
 }
 
@@ -620,6 +736,9 @@ QVariantList InstallerManager::updateCenterItems() const {
         const QUrl url(value);
         const QString name = QFileInfo(url.path()).fileName();
         return name.isEmpty() ? value : name;
+    };
+    const auto shortRevision = [](const QString &value) {
+        return value.size() > 10 ? value.left(10) : value;
     };
 
     for (int row = 0; row < m_games->rowCount(); ++row) {
@@ -666,25 +785,32 @@ QVariantList InstallerManager::updateCenterItems() const {
 
         if (game->renodxInstalled) {
             const bool detected = info.value(QStringLiteral("renodxUpdateDetected")).toBool();
-            const bool available = info.value(QStringLiteral("renodxUpdateAvailable")).toBool();
+            const bool updateAvailable = info.value(QStringLiteral("renodxUpdateAvailable")).toBool();
             const bool skipped = info.value(QStringLiteral("renodxSkipped")).toBool();
             const QVariantMap resolution = renoDxResolutionInfo(row);
             detectedUpdates += detected ? 1 : 0;
-            actionableUpdates += available ? 1 : 0;
+            actionableUpdates += updateAvailable ? 1 : 0;
             QString installed = shortUrlName(info.value(QStringLiteral("installedRenoDxUrl")).toString());
             if (installed.isEmpty())
                 installed = game->renodxFile.isEmpty() ? QStringLiteral("Detected") : game->renodxFile;
+            const QString installedRevision = info.value(QStringLiteral("installedRenoDxRevision")).toString();
+            if (!installedRevision.isEmpty())
+                installed += QStringLiteral(" @ ") + shortRevision(installedRevision);
+            QString availableLabel = shortUrlName(info.value(QStringLiteral("desiredRenoDxUrl")).toString());
+            const QString currentRevision = info.value(QStringLiteral("currentRenoDxRevision")).toString();
+            if (!currentRevision.isEmpty())
+                availableLabel += QStringLiteral(" @ ") + shortRevision(currentRevision);
             components << QVariantMap{
                 {QStringLiteral("id"), QStringLiteral("renodx")},
                 {QStringLiteral("name"), QStringLiteral("RenoDX")},
                 {QStringLiteral("installed"), installed},
-                {QStringLiteral("available"), shortUrlName(info.value(QStringLiteral("desiredRenoDxUrl")).toString())},
+                {QStringLiteral("available"), availableLabel},
                 {QStringLiteral("managed"), game->renodxManaged},
                 {QStringLiteral("external"), game->renodxExternal},
                 {QStringLiteral("updateDetected"), detected},
-                {QStringLiteral("updateAvailable"), available},
+                {QStringLiteral("updateAvailable"), updateAvailable},
                 {QStringLiteral("skipped"), skipped},
-                {QStringLiteral("canUpdate"), available && game->renodxManaged},
+                {QStringLiteral("canUpdate"), updateAvailable && game->renodxManaged},
                 {QStringLiteral("summary"), info.value(QStringLiteral("renodxSummary")).toString()},
                 {QStringLiteral("matchTitle"), resolution.value(QStringLiteral("matchedCatalogTitle"))},
                 {QStringLiteral("matchMethod"), resolution.value(QStringLiteral("matchMethod"))},
@@ -743,7 +869,12 @@ QVariantList InstallerManager::updateCenterItems() const {
             auto component = value.toMap();
             const auto id = component.value(QStringLiteral("id")).toString();
             bool old = false;
-            if (id == QStringLiteral("renodx")) old = !m_catalog || m_catalog->catalogStale();
+            if (id == QStringLiteral("renodx")) {
+                const QVariantMap renoInfo = m_updateInfo.value(game->appId);
+                const bool revisionTracked = !renoInfo.value(QStringLiteral("currentRenoDxSourceKey")).toString().isEmpty();
+                const bool revisionFresh = renoInfo.value(QStringLiteral("currentRenoDxRevisionFresh")).toBool();
+                old = !m_catalog || m_catalog->catalogStale() || (revisionTracked && !revisionFresh);
+            }
             if (id == QStringLiteral("reframework")) old = !releaseCacheFresh(QStringLiteral("REFramework"));
             if (id == QStringLiteral("optiscaler")) old = !releaseCacheFresh(QStringLiteral("OptiScaler"));
             if (id == QStringLiteral("reshade")) {

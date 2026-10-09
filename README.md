@@ -13,6 +13,7 @@ It discovers games from Steam, Heroic, Lutris, and custom entries, checks what e
 - **Recommended Setup** shows what the selected game needs and exposes direct Install, Update, Review, Preview, Take over, and Fix actions where appropriate.
 - **Set up recommended** can safely process deterministic managed actions in order while leaving ambiguous matches and external installations for review.
 - **RenoDX matching safeguards** prevent unsafe title matches and require confirmation for partial matches.
+- **Game-specific RenoDX update checks** track the source revision behind managed snapshot installs, while keeping partial matches and external installs review-only.
 - Integrated management for **ReShade, RenoDX, REFramework, and OptiScaler**.
 - Library discovery for **Steam, Heroic, Lutris, and custom programs**.
 - **Backups, restore points, and recovery tools** for managed changes.
@@ -21,7 +22,7 @@ It discovers games from Steam, Heroic, Lutris, and custom entries, checks what e
 
 ## Current version
 
-**0.23.5**
+**0.23.6**
 
 ## Requirements
 
@@ -60,7 +61,7 @@ sudo cmake --install build
 
 This installs the Reno119 executable, desktop launcher, and bundled theme/template support files.
 
-An Arch/CachyOS `PKGBUILD` is also included under `packaging/arch/`. It is ready to use once a matching `v0.23.5` Git tag exists.
+An Arch/CachyOS `PKGBUILD` is also included under `packaging/arch/`. It is ready to use once a matching `v0.23.6` Git tag exists.
 
 ## Noctalia v5 theming
 

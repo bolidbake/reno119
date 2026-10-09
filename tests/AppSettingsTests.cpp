@@ -118,10 +118,12 @@ void AppSettingsTests::prunesDefaultWorkspaceValues() {
     });
 
     const QVariantMap state = appSettings.viewState();
+    const QVariantMap expectedPositions{{QStringLiteral("2527390"), 120.0}};
+    const QVariantMap expectedComponents{{QStringLiteral("2527390"), true}};
     QCOMPARE(state.value(QStringLiteral("gameId")).toString(), QStringLiteral("3280350"));
     QVERIFY(!state.contains(QStringLiteral("listY")));
-    QCOMPARE(state.value(QStringLiteral("positions")).toMap(), QVariantMap{{QStringLiteral("2527390"), 120.0}});
-    QCOMPARE(state.value(QStringLiteral("components")).toMap(), QVariantMap{{QStringLiteral("2527390"), true}});
+    QCOMPARE(state.value(QStringLiteral("positions")).toMap(), expectedPositions);
+    QCOMPARE(state.value(QStringLiteral("components")).toMap(), expectedComponents);
     QVERIFY(!state.contains(QStringLiteral("notes")));
     QVERIFY(!state.contains(QStringLiteral("tools")));
     QCOMPARE(state.value(QStringLiteral("actions")).toBool(), true);

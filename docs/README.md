@@ -1,5 +1,13 @@
-# GitHub Pages
+# GitHub Pages starter
 
-This directory contains Reno119's dependency-free GitHub Pages site.
+This directory is intentionally dependency-free.
 
-To publish it, open **Settings → Pages**, choose **Deploy from a branch**, select `main`, select `/docs`, and save.
+To publish it:
+
+1. Push the repository to GitHub.
+2. Open **Settings → Pages**.
+3. Choose **Deploy from a branch**.
+4. Select `main` and `/docs`.
+5. Save.
+
+On a standard GitHub project-pages URL (`USERNAME.github.io/REPOSITORY/`), the page automatically derives the repository and latest-release links from the URL, so no username needs to be hard-coded into `index.html`.
