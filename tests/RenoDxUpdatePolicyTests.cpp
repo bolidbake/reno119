@@ -104,6 +104,24 @@ private slots:
         QVERIFY(decision.catalogMissing);
     }
 
+    void dedicatedEntryWithoutRevisionMetadataIsUnknown() {
+        RenoDxUpdateTarget current;
+        current.url = QStringLiteral("https://example.invalid/game.addon64");
+        current.catalogMatched = true;
+        current.exact = true;
+
+        const auto decision = RenoDxUpdatePolicy::evaluate(
+            true, true, false,
+            current.url,
+            QString(),
+            QString(),
+            current);
+
+        QVERIFY(!decision.updateDetected);
+        QVERIFY(!decision.updateAvailable);
+        QVERIFY(decision.comparisonUnknown);
+    }
+
     void legacyDedicatedInstallDoesNotDowngradeToGeneric() {
         RenoDxUpdateTarget current;
         const auto decision = RenoDxUpdatePolicy::evaluate(
