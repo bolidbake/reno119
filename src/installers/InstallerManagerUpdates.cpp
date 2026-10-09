@@ -796,15 +796,15 @@ QVariantList InstallerManager::updateCenterItems() const {
             const QString installedRevision = info.value(QStringLiteral("installedRenoDxRevision")).toString();
             if (!installedRevision.isEmpty())
                 installed += QStringLiteral(" @ ") + shortRevision(installedRevision);
-            QString availableLabel = shortUrlName(info.value(QStringLiteral("desiredRenoDxUrl")).toString());
+            QString available = shortUrlName(info.value(QStringLiteral("desiredRenoDxUrl")).toString());
             const QString currentRevision = info.value(QStringLiteral("currentRenoDxRevision")).toString();
             if (!currentRevision.isEmpty())
-                availableLabel += QStringLiteral(" @ ") + shortRevision(currentRevision);
+                available += QStringLiteral(" @ ") + shortRevision(currentRevision);
             components << QVariantMap{
                 {QStringLiteral("id"), QStringLiteral("renodx")},
                 {QStringLiteral("name"), QStringLiteral("RenoDX")},
                 {QStringLiteral("installed"), installed},
-                {QStringLiteral("available"), availableLabel},
+                {QStringLiteral("available"), available},
                 {QStringLiteral("managed"), game->renodxManaged},
                 {QStringLiteral("external"), game->renodxExternal},
                 {QStringLiteral("updateDetected"), detected},
