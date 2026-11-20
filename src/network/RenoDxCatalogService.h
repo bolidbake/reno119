@@ -7,6 +7,7 @@
 #include <QNetworkAccessManager>
 #include <QSet>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantMap>
 #include "RenoDxTitleMatcher.h"
 #include <functional>
@@ -58,13 +59,18 @@ private:
     void fetchRhiEngineIniProfile(const QString &normalizedGameKey, const QString &fileName);
     void loadRhiCache();
     void saveRhiCache() const;
+    void scheduleRhiCacheSave();
     void loadRenoDxRevisionCache();
     void saveRenoDxRevisionCache() const;
+    void scheduleRenoDxRevisionCacheSave();
     bool renoDxRevisionCacheFresh(const QString &sourceKey) const;
+    QString renoDxSourceRevisionForKey(const QString &sourceKey) const;
     void refreshRhiManifest(bool forceRefresh = false);
     bool rhiCacheFresh() const;
 
     QNetworkAccessManager m_net;
+    QTimer m_rhiSaveTimer;
+    QTimer m_revisionSaveTimer;
     QDateTime m_catalogChecked;
     QDateTime m_rhiChecked;
     bool m_catalogRefreshing = false;
@@ -75,6 +81,7 @@ private:
     bool m_rhiManifestFinished = false;
     bool m_rhiRefreshing = false;
     QVector<RenoDxCatalogEntry> m_renoDxEntries;
+    QHash<QString, int> m_renoDxExactIndex;
     QString m_renoDxRecommendedReShade;
     QJsonObject m_renoDxRevisionCache;
     QByteArray m_rhiManifestJson;

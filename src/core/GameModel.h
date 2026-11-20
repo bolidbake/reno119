@@ -261,5 +261,6 @@ private:
     QTimer m_cacheWriteTimer;
     QSettings m_settings;
     QStringList m_reFrameworkSupportedTitles;
+    QStringList m_reFrameworkSupportedKeys;
     QSet<QString> m_bulkSelection;
 };

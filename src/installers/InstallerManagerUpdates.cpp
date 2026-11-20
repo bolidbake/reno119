@@ -493,24 +493,36 @@ void InstallerManager::refreshRenoDxRevisionsForGames(const QVector<GameInfo> &g
         return;
     }
 
+    constexpr int kMaxConcurrentLookups = 4;
     auto index = QSharedPointer<int>::create(0);
-    auto step = QSharedPointer<std::function<void()>>::create();
-    *step = [this, names, index, step, forceRefresh, done = std::move(done)]() mutable {
-        if (*index >= names->size()) {
-            auto finished = std::move(done);
-            *step = {};
-            if (finished)
-                finished();
+    auto remaining = QSharedPointer<int>::create(names->size());
+    auto inFlight = QSharedPointer<int>::create(0);
+    auto pumping = QSharedPointer<bool>::create(false);
+    auto donePtr = QSharedPointer<std::function<void()>>::create(std::move(done));
+    auto pump = QSharedPointer<std::function<void()>>::create();
+    *pump = [this, names, index, remaining, inFlight, pumping, donePtr, pump, forceRefresh]() {
+        if (*pumping)
             return;
+        *pumping = true;
+        while (*inFlight < kMaxConcurrentLookups && *index < names->size()) {
+            const QString gameName = names->at((*index)++);
+            ++*inFlight;
+            m_catalog->refreshRenoDxSourceRevision(gameName, forceRefresh, [remaining, inFlight, donePtr, pump]() {
+                --*inFlight;
+                if (--*remaining == 0) {
+                    auto finished = std::move(*donePtr);
+                    *pump = {};
+                    if (finished)
+                        finished();
+                    return;
+                }
+                if (*pump)
+                    (*pump)();
+            });
         }
-
-        const QString gameName = names->at((*index)++);
-        m_catalog->refreshRenoDxSourceRevision(gameName, forceRefresh, [step] {
-            if (*step)
-                (*step)();
-        });
+        *pumping = false;
     };
-    (*step)();
+    (*pump)();
 }
 
 void InstallerManager::checkUpdates(int row) {

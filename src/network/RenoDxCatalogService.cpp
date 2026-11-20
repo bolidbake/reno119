@@ -36,16 +36,27 @@ QString sanitizeRhiGameNote(QString note) {
     // RHI notes are authored for RHI's own table layout. Reno119 surfaces the
     // useful game-specific guidance, but table-navigation instructions such
     // as "install REFramework from the row above" do not map to our UI.
-    note.remove(QRegularExpression(
+    static const QRegularExpression rowAboveRx(
         QStringLiteral(R"((?:\r?\n\s*)*(?:please\s+)?install\s+(?:it|re\s*framework)\s+from\s+(?:the\s+)?(?:re\s*framework\s+)?row\s+above[.!]?\s*)"),
-        QRegularExpression::CaseInsensitiveOption));
-    note.replace(QRegularExpression(QStringLiteral(R"([ \t]+\n)")), QStringLiteral("\n"));
-    note.replace(QRegularExpression(QStringLiteral(R"(\n{3,})")), QStringLiteral("\n\n"));
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression trailingSpacesRx(QStringLiteral(R"([ \t]+\n)"));
+    static const QRegularExpression extraNewlinesRx(QStringLiteral(R"(\n{3,})"));
+    note.remove(rowAboveRx);
+    note.replace(trailingSpacesRx, QStringLiteral("\n"));
+    note.replace(extraNewlinesRx, QStringLiteral("\n\n"));
     return note.trimmed();
 }
 }
 
 RenoDxCatalogService::RenoDxCatalogService(QObject *parent) : QObject(parent) {
+    m_rhiSaveTimer.setSingleShot(true);
+    m_rhiSaveTimer.setInterval(300);
+    connect(&m_rhiSaveTimer, &QTimer::timeout, this, &RenoDxCatalogService::saveRhiCache);
+
+    m_revisionSaveTimer.setSingleShot(true);
+    m_revisionSaveTimer.setInterval(300);
+    connect(&m_revisionSaveTimer, &QTimer::timeout, this, &RenoDxCatalogService::saveRenoDxRevisionCache);
+
     QFile file(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/renodx-catalog-v1.json"));
     if (file.open(QIODevice::ReadOnly)) {
         const auto cached = QJsonDocument::fromJson(file.readAll()).object();
@@ -62,6 +73,14 @@ RenoDxCatalogService::RenoDxCatalogService(QObject *parent) : QObject(parent) {
 }
 
 void RenoDxCatalogService::shutdown() {
+    if (m_rhiSaveTimer.isActive()) {
+        m_rhiSaveTimer.stop();
+        saveRhiCache();
+    }
+    if (m_revisionSaveTimer.isActive()) {
+        m_revisionSaveTimer.stop();
+        saveRenoDxRevisionCache();
+    }
     const auto replies = m_net.findChildren<QNetworkReply *>();
     for (QNetworkReply *reply : replies) {
         QObject::disconnect(reply, nullptr, this, nullptr);
@@ -131,6 +150,14 @@ void RenoDxCatalogService::saveRhiCache() const {
         file.commit();
 }
 
+void RenoDxCatalogService::scheduleRhiCacheSave() {
+    m_rhiSaveTimer.start();
+}
+
+void RenoDxCatalogService::scheduleRenoDxRevisionCacheSave() {
+    m_revisionSaveTimer.start();
+}
+
 void RenoDxCatalogService::refreshRhiManifest(bool forceRefresh) {
     if (m_rhiRefreshing || (!forceRefresh && rhiCacheFresh()))
         return;
@@ -177,10 +204,11 @@ void RenoDxCatalogService::refreshCatalog(bool forceRefresh) {
         if (reply->error() == QNetworkReply::NoError) {
             const QString markdown = QString::fromUtf8(reply->readAll());
             const auto previous = m_renoDxEntries;
+            const auto previousIndex = m_renoDxExactIndex;
             parseRenoDxWiki(markdown);
             if (!m_renoDxEntries.isEmpty()) {
                 accepted = true;
-                const QRegularExpression rx(R"(Install\s+\[?ReShade\s+([0-9]+(?:\.[0-9]+){1,3})\+?\s+with\s+full\s+add-on\s+support)", QRegularExpression::CaseInsensitiveOption);
+                static const QRegularExpression rx(R"(Install\s+\[?ReShade\s+([0-9]+(?:\.[0-9]+){1,3})\+?\s+with\s+full\s+add-on\s+support)", QRegularExpression::CaseInsensitiveOption);
                 const auto match = rx.match(markdown);
                 m_renoDxRecommendedReShade = match.hasMatch() ? match.captured(1) : QString();
                 m_catalogChecked = QDateTime::currentDateTimeUtc();
@@ -192,7 +220,10 @@ void RenoDxCatalogService::refreshCatalog(bool forceRefresh) {
                 QSaveFile file(dir + QStringLiteral("/renodx-catalog-v1.json"));
                 const auto data = QJsonDocument(cached).toJson();
                 if (file.open(QIODevice::WriteOnly) && file.write(data) == data.size()) file.commit();
-            } else m_renoDxEntries = previous;
+            } else {
+                m_renoDxEntries = previous;
+                m_renoDxExactIndex = previousIndex;
+            }
         }
         if (!accepted) {
             const QString path = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/renodx-catalog-v1.json");
@@ -217,6 +248,7 @@ void RenoDxCatalogService::refreshCatalog(bool forceRefresh) {
 
 void RenoDxCatalogService::parseRenoDxWiki(const QString &markdown) {
     m_renoDxEntries.clear();
+    m_renoDxExactIndex.clear();
 
     static const QRegularExpression addonUrl(
         R"(\]\((https?://[^\)\s]+\.addon(?:64|32)(?:\?[^\)\s]*)?)\))",
@@ -225,7 +257,6 @@ void RenoDxCatalogService::parseRenoDxWiki(const QString &markdown) {
         R"(https://img\.shields\.io/github/last-commit/[^\)\s]+)",
         QRegularExpression::CaseInsensitiveOption);
 
-    QSet<QString> seenKeys;
     const QStringList lines = markdown.split('\n');
     for (const QString &line : lines) {
         if (!line.startsWith('|') || !line.contains(QStringLiteral(".addon"), Qt::CaseInsensitive))
@@ -237,7 +268,7 @@ void RenoDxCatalogService::parseRenoDxWiki(const QString &markdown) {
 
         const QString rawTitle = columns.at(1).trimmed();
         const QString key = RenoDxTitleMatcher::normalizeGameName(rawTitle);
-        if (key.isEmpty() || seenKeys.contains(key))
+        if (key.isEmpty() || m_renoDxExactIndex.contains(key))
             continue;
 
         const auto match = addonUrl.match(line);
@@ -261,9 +292,9 @@ void RenoDxCatalogService::parseRenoDxWiki(const QString &markdown) {
             }
         }
 
-        seenKeys.insert(key);
+        m_renoDxExactIndex.insert(key, static_cast<int>(m_renoDxEntries.size()));
         m_renoDxEntries.push_back({RenoDxTitleMatcher::cleanDisplayTitle(rawTitle), match.captured(1),
-                                   sourceOwner, sourceRepo, sourcePath});
+                                   sourceOwner, sourceRepo, sourcePath, key});
     }
 }
 
@@ -365,7 +396,7 @@ void RenoDxCatalogService::fetchRhiEngineIniProfile(const QString &normalizedGam
             if (!text.isEmpty()) {
                 m_rhiEngineIniProfiles.insert(normalizedGameKey, text);
                 m_rhiEngineIniProfileChecked.insert(normalizedGameKey, QDateTime::currentDateTimeUtc());
-                saveRhiCache();
+                scheduleRhiCacheSave();
             }
         }
         emit catalogChanged();
@@ -402,17 +433,22 @@ bool RenoDxCatalogService::renoDxRevisionCacheFresh(const QString &sourceKey) co
            !entry.value(QStringLiteral("refreshFailed")).toBool();
 }
 
-QString RenoDxCatalogService::renoDxSourceRevision(const QString &gameName) const {
-    const auto match = RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries);
-    const QString sourceKey = match.sourceKey();
-    if (!match.matched() || sourceKey.isEmpty() || !renoDxRevisionCacheFresh(sourceKey))
+QString RenoDxCatalogService::renoDxSourceRevisionForKey(const QString &sourceKey) const {
+    if (sourceKey.isEmpty() || !renoDxRevisionCacheFresh(sourceKey))
         return {};
     return m_renoDxRevisionCache.value(sourceKey).toObject().value(QStringLiteral("revision")).toString();
 }
 
+QString RenoDxCatalogService::renoDxSourceRevision(const QString &gameName) const {
+    const auto match = RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries, m_renoDxExactIndex);
+    if (!match.matched())
+        return {};
+    return renoDxSourceRevisionForKey(match.sourceKey());
+}
+
 void RenoDxCatalogService::refreshRenoDxSourceRevision(const QString &gameName, bool forceRefresh,
                                                        std::function<void()> done) {
-    const auto match = RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries);
+    const auto match = RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries, m_renoDxExactIndex);
     const QString sourceKey = match.sourceKey();
     if (!match.matched() || sourceKey.isEmpty() || match.sourceOwner.isEmpty() || match.sourceRepo.isEmpty()) {
         if (done)
@@ -470,7 +506,7 @@ void RenoDxCatalogService::refreshRenoDxSourceRevision(const QString &gameName, 
             entry.insert(QStringLiteral("refreshFailed"), true);
         }
         m_renoDxRevisionCache.insert(sourceKey, entry);
-        saveRenoDxRevisionCache();
+        scheduleRenoDxRevisionCacheSave();
         emit catalogChanged();
         reply->deleteLater();
         if (done)
@@ -479,7 +515,9 @@ void RenoDxCatalogService::refreshRenoDxSourceRevision(const QString &gameName, 
 }
 
 QVariantMap RenoDxCatalogService::renoDxSnapshotInfo(const QString &gameName) const {
-    const auto match = RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries);
+    const auto match = RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries, m_renoDxExactIndex);
+    const QString sourceKey = match.sourceKey();
+    const bool revisionFresh = !sourceKey.isEmpty() && renoDxRevisionCacheFresh(sourceKey);
     QVariantMap out;
     out.insert(QStringLiteral("url"), match.url);
     out.insert(QStringLiteral("title"), match.title);
@@ -489,16 +527,18 @@ QVariantMap RenoDxCatalogService::renoDxSnapshotInfo(const QString &gameName) co
     out.insert(QStringLiteral("sourceOwner"), match.sourceOwner);
     out.insert(QStringLiteral("sourceRepo"), match.sourceRepo);
     out.insert(QStringLiteral("sourcePath"), match.sourcePath);
-    out.insert(QStringLiteral("sourceKey"), match.sourceKey());
-    out.insert(QStringLiteral("sourceRevision"), renoDxSourceRevision(gameName));
-    out.insert(QStringLiteral("sourceRevisionTracked"), !match.sourceKey().isEmpty());
-    out.insert(QStringLiteral("sourceRevisionFresh"),
-               !match.sourceKey().isEmpty() && renoDxRevisionCacheFresh(match.sourceKey()));
+    out.insert(QStringLiteral("sourceKey"), sourceKey);
+    out.insert(QStringLiteral("sourceRevision"),
+               (match.matched() && revisionFresh)
+                   ? m_renoDxRevisionCache.value(sourceKey).toObject().value(QStringLiteral("revision")).toString()
+                   : QString());
+    out.insert(QStringLiteral("sourceRevisionTracked"), !sourceKey.isEmpty());
+    out.insert(QStringLiteral("sourceRevisionFresh"), revisionFresh);
     return out;
 }
 
 QString RenoDxCatalogService::renoDxSnapshot(const QString &gameName) const {
-    return renoDxSnapshotInfo(gameName).value(QStringLiteral("url")).toString();
+    return RenoDxTitleMatcher::resolve(gameName, m_renoDxEntries, m_renoDxExactIndex).url;
 }
 
 QString RenoDxCatalogService::recommendedReShadeVersion(const QString &) const {

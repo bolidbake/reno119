@@ -11,7 +11,7 @@ QByteArray ModDetectionService::readBytes(const QString &path, qint64 maxBytes) 
 }
 
 QStringList ModDetectionService::reShadeProxyNames() {
-    return {
+    static const QStringList names = {
         QStringLiteral("dxgi.dll"),
         QStringLiteral("d3d9.dll"),
         QStringLiteral("d3d10.dll"),
@@ -19,10 +19,11 @@ QStringList ModDetectionService::reShadeProxyNames() {
         QStringLiteral("d3d12.dll"),
         QStringLiteral("opengl32.dll")
     };
+    return names;
 }
 
 QStringList ModDetectionService::optiScalerProxyNames() {
-    return {
+    static const QStringList names = {
         QStringLiteral("dxgi.dll"),
         QStringLiteral("winmm.dll"),
         QStringLiteral("d3d12.dll"),
@@ -32,6 +33,7 @@ QStringList ModDetectionService::optiScalerProxyNames() {
         QStringLiteral("winhttp.dll"),
         QStringLiteral("OptiScaler.asi")
     };
+    return names;
 }
 
 bool ModDetectionService::looksLikeReShadeBinary(const QString &path) {
@@ -40,12 +42,18 @@ bool ModDetectionService::looksLikeReShadeBinary(const QString &path) {
 }
 
 bool ModDetectionService::looksLikeReFrameworkBinary(const QString &path) {
-    const QByteArray bytes = readBytes(path, 12 * 1024 * 1024).toLower();
+    QByteArray bytes = readBytes(path, 12 * 1024 * 1024);
+    if (bytes.isEmpty())
+        return false;
+    for (char &c : bytes) {
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c + ('a' - 'A'));
+    }
     return bytes.contains("reframework") || bytes.contains("re2_framework") || bytes.contains("praydog");
 }
 
 bool ModDetectionService::looksLikeOptiScalerBinary(const QString &path) {
-    const QByteArray bytes = readBytes(path);
+    const QByteArray bytes = readBytes(path, 16 * 1024 * 1024);
     if (bytes.isEmpty())
         return false;
 
@@ -53,11 +61,11 @@ bool ModDetectionService::looksLikeOptiScalerBinary(const QString &path) {
     // OptiScaler. A single incidental "OptiScaler" string is therefore not
     // sufficient evidence. Keep the v0.13.3 false-positive fix as a central
     // invariant: require the product name plus at least one independent marker.
-    const bool hasName = bytes.contains("OptiScaler");
-    const bool hasIni = bytes.contains("OptiScaler.ini");
-    const bool hasOptiFg = bytes.contains("OptiFG");
-    const bool hasOptiDllPath = bytes.contains("OptiDllPath");
-    return hasName && (hasIni || hasOptiFg || hasOptiDllPath);
+    if (!bytes.contains("OptiScaler"))
+        return false;
+    return bytes.contains("OptiScaler.ini") ||
+           bytes.contains("OptiFG") ||
+           bytes.contains("OptiDllPath");
 }
 
 QString ModDetectionService::firstReShadeProxy(const QString &exeDir) {

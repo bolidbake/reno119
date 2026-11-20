@@ -20,12 +20,20 @@ constexpr qint64 kNegativeArtworkCacheSeconds = 7LL * 24 * 60 * 60;
 
 CoverService::CoverService(QObject *parent)
     : QObject(parent) {
+    m_negativeCacheSaveTimer.setSingleShot(true);
+    m_negativeCacheSaveTimer.setInterval(400);
+    connect(&m_negativeCacheSaveTimer, &QTimer::timeout, this, &CoverService::saveNegativeCache);
+
     QDir().mkpath(cachePath());
     QDir().mkpath(bannerCachePath());
     loadNegativeCache();
 }
 
 void CoverService::shutdown() {
+    if (m_negativeCacheSaveTimer.isActive()) {
+        m_negativeCacheSaveTimer.stop();
+        saveNegativeCache();
+    }
     const auto replies = m_network.findChildren<QNetworkReply *>();
     for (QNetworkReply *reply : replies) {
         QObject::disconnect(reply, nullptr, this, nullptr);
@@ -79,17 +87,22 @@ void CoverService::saveNegativeCache() const {
         file.commit();
 }
 
+void CoverService::scheduleNegativeCacheSave() {
+    m_negativeCacheSaveTimer.start();
+}
+
 void CoverService::rememberMissing(const QString &appId, bool banner) {
     const QDateTime now = QDateTime::currentDateTimeUtc();
     (banner ? m_bannerMissing : m_missing).insert(appId);
     (banner ? m_bannerMissingCheckedUtc : m_missingCheckedUtc).insert(appId, now);
-    saveNegativeCache();
+    scheduleNegativeCacheSave();
 }
 
 void CoverService::forgetMissing(const QString &appId, bool banner) {
-    (banner ? m_bannerMissing : m_missing).remove(appId);
-    (banner ? m_bannerMissingCheckedUtc : m_missingCheckedUtc).remove(appId);
-    saveNegativeCache();
+    const bool removedMissing = (banner ? m_bannerMissing : m_missing).remove(appId);
+    const bool removedStamp = (banner ? m_bannerMissingCheckedUtc : m_missingCheckedUtc).remove(appId);
+    if (removedMissing || removedStamp)
+        scheduleNegativeCacheSave();
 }
 
 QString CoverService::cacheRoot() const {

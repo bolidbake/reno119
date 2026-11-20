@@ -39,8 +39,8 @@ QStringList SteamScanner::librariesForRoot(const QString &root) {
     QFile f(root + "/steamapps/libraryfolders.vdf");
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return libs;
     const QString text = QString::fromUtf8(f.readAll());
-    const QRegularExpression rx(QStringLiteral("\\\"path\\\"\\s+\\\"([^\\\"]+)\\\""),
-                                QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression rx(QStringLiteral("\\\"path\\\"\\s+\\\"([^\\\"]+)\\\""),
+                                       QRegularExpression::CaseInsensitiveOption);
     auto it = rx.globalMatch(text);
     while (it.hasNext()) {
         QString p = it.next().captured(1);
@@ -97,8 +97,9 @@ QStringList meaningfulExecutableTokens(const QString &value) {
         QStringLiteral("complete"), QStringLiteral("remastered"), QStringLiteral("remaster"),
         QStringLiteral("windows"), QStringLiteral("steam"), QStringLiteral("pc")
     };
+    static const QRegularExpression nonAlnum(QStringLiteral("[^\\p{L}\\p{N}]+"));
     QString normalized = value.normalized(QString::NormalizationForm_KD).toLower();
-    normalized.replace(QRegularExpression(QStringLiteral("[^\\p{L}\\p{N}]+")), QStringLiteral(" "));
+    normalized.replace(nonAlnum, QStringLiteral(" "));
     QStringList out;
     for (const QString &token : normalized.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
         if (token.size() >= 3 && !ignored.contains(token) && !out.contains(token))
@@ -108,8 +109,9 @@ QStringList meaningfulExecutableTokens(const QString &value) {
 }
 
 QString executableInitialism(const QString &value) {
+    static const QRegularExpression nonAlnum(QStringLiteral("[^\\p{L}\\p{N}]+"));
     QString normalized = value.normalized(QString::NormalizationForm_KD).toLower();
-    normalized.replace(QRegularExpression(QStringLiteral("[^\\p{L}\\p{N}]+")), QStringLiteral(" "));
+    normalized.replace(nonAlnum, QStringLiteral(" "));
     QString out;
     for (const QString &token : normalized.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
         if (token == QStringLiteral("the") || token == QStringLiteral("a") || token == QStringLiteral("an"))
@@ -148,6 +150,31 @@ bool hasAnyExecutableMarker(const QString &value, const QStringList &markers) {
             return true;
     }
     return false;
+}
+
+QString findXivLauncherExecutable(const QString &gameDir, QString *installPath, QString *prefixPath) {
+    QDir cursor(QFileInfo(gameDir).absolutePath());
+    for (int level = 0; level < 8; ++level) {
+        const QStringList launcherRoots = {
+            cursor.filePath(QStringLiteral("dev.goats.xivlauncher")),
+            cursor.filePath(QStringLiteral("dev.goats.xivlauncherffxiv"))
+        };
+        for (const QString &launcherRoot : launcherRoots) {
+            const QString executable = QDir(launcherRoot).filePath(QStringLiteral("ffxiv/game/ffxiv_dx11.exe"));
+            if (!QFileInfo(executable).isFile())
+                continue;
+
+            if (installPath)
+                *installPath = QDir(launcherRoot).filePath(QStringLiteral("ffxiv/game"));
+            if (prefixPath)
+                *prefixPath = QDir(launcherRoot).filePath(QStringLiteral("wineprefix"));
+            return executable;
+        }
+
+        if (!cursor.cdUp())
+            break;
+    }
+    return {};
 }
 }
 
@@ -232,6 +259,7 @@ QString SteamScanner::findBestExecutable(const QString &gameDir, const QString &
     QVector<Candidate> ranked;
     ranked.reserve(exes.size());
 
+    const QDir gameDirObj(gameDir);
     const QString base = QFileInfo(gameDir).fileName().toLower();
     const QString baseKey = executableKey(base);
     const QString titleKey = executableKey(preferredName);
@@ -239,13 +267,13 @@ QString SteamScanner::findBestExecutable(const QString &gameDir, const QString &
     const QStringList titleTokens = meaningfulExecutableTokens(preferredName);
     const QStringList baseTokens = meaningfulExecutableTokens(base);
 
-    const QStringList hardLauncherMarkers = {
+    static const QStringList hardLauncherMarkers = {
         QStringLiteral("ubisoftconnect"), QStringLiteral("ubisoftgamelauncher"),
         QStringLiteral("uplaylauncher"), QStringLiteral("uplaywebcore"),
         QStringLiteral("uplaybrowser"), QStringLiteral("ubisoftconnectinstaller"),
         QStringLiteral("ubisoftextension"), QStringLiteral("upc")
     };
-    const QStringList genericToolMarkers = {
+    static const QStringList genericToolMarkers = {
         QStringLiteral("launcher"), QStringLiteral("updater"), QStringLiteral("patcher"),
         QStringLiteral("autopatch"), QStringLiteral("installer"), QStringLiteral("helper"),
         QStringLiteral("crash"), QStringLiteral("report"), QStringLiteral("benchmark"),
@@ -272,22 +300,23 @@ QString SteamScanner::findBestExecutable(const QString &gameDir, const QString &
         if (nKey.size() >= 5 && !baseKey.isEmpty() &&
             (baseKey.contains(nKey) || nKey.contains(baseKey))) score += 55;
 
+        // meaningfulExecutableTokens() already returns NFKD-lowercased alphanumeric tokens.
         int tokenScore = 0;
         for (const QString &token : titleTokens) {
-            if (nKey.contains(executableKey(token)))
+            if (nKey.contains(token))
                 tokenScore += 30;
         }
         score += qMin(tokenScore, 100);
         int baseTokenScore = 0;
         for (const QString &token : baseTokens) {
-            if (nKey.contains(executableKey(token)))
+            if (nKey.contains(token))
                 baseTokenScore += 15;
         }
         score += qMin(baseTokenScore, 45);
 
+        const QString relative = QDir::fromNativeSeparators(gameDirObj.relativeFilePath(path));
         if (titleInitialism.size() >= 3) {
-            QString relativeForSegments = QDir::fromNativeSeparators(QDir(gameDir).relativeFilePath(path));
-            const QStringList segments = relativeForSegments.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+            const QStringList segments = relative.split(QLatin1Char('/'), Qt::SkipEmptyParts);
             for (const QString &segment : segments) {
                 const QString segmentKey = executableKey(QFileInfo(segment).completeBaseName());
                 if (segmentKey == titleInitialism) {
@@ -309,8 +338,6 @@ QString SteamScanner::findBestExecutable(const QString &gameDir, const QString &
         else if (sizeMiB >= 16) score += 18;
         else if (sizeMiB >= 4) score += 8;
 
-        QString relative = QDir(gameDir).relativeFilePath(path);
-        relative = QDir::fromNativeSeparators(relative);
         const int depth = relative.count(QLatin1Char('/'));
         if (depth == 0) score += 25;
         else if (depth <= 2) score += 12;
@@ -367,7 +394,7 @@ QString SteamScanner::findBestExecutable(const QString &gameDir, const QString &
 
 bool SteamScanner::isLikelyLauncherExecutable(const QString &path) {
     const QString key = executableKey(QFileInfo(path).completeBaseName());
-    const QStringList markers = {
+    static const QStringList markers = {
         QStringLiteral("ubisoftconnect"), QStringLiteral("ubisoftgamelauncher"),
         QStringLiteral("uplaylauncher"), QStringLiteral("uplaywebcore"),
         QStringLiteral("uplaybrowser"), QStringLiteral("ubisoftconnectinstaller"),
@@ -506,7 +533,7 @@ bool SteamScanner::supportsReFramework(const QString &gameName, const QString &e
         if (ch.isLetterOrNumber()) compact.append(ch);
     }
 
-    const QStringList supported = {
+    static const QStringList supported = {
         QStringLiteral("devilmaycry5"),
         QStringLiteral("residentevil2"),
         QStringLiteral("residentevil3"),
@@ -627,6 +654,28 @@ QVector<GameInfo> SteamScanner::scan() {
 
             QStringList executableCandidates;
             g.exePath = findBestExecutable(g.installPath, g.name, g.graphicsApi, g.architecture, &executableCandidates);
+            const bool isFinalFantasyXiv = appId == QStringLiteral("39210") ||
+                                           name.contains(QStringLiteral("FINAL FANTASY XIV"), Qt::CaseInsensitive);
+            if (isFinalFantasyXiv) {
+                QString xivInstallPath;
+                QString xivPrefix;
+                const QString xivExecutable = findXivLauncherExecutable(g.installPath, &xivInstallPath, &xivPrefix);
+                if (!xivExecutable.isEmpty()) {
+                    g.sourceMetadata.insert(QStringLiteral("rejectedSteamExecutable"), g.exePath);
+                    g.sourceMetadata.insert(QStringLiteral("steamInstallPath"), g.installPath);
+                    g.sourceMetadata.insert(QStringLiteral("xivLauncherRoot"), QFileInfo(xivExecutable).absolutePath());
+                    g.installPath = xivInstallPath;
+                    g.exePath = xivExecutable;
+                    if (QDir(xivPrefix).exists())
+                        g.protonPrefix = xivPrefix;
+                    g.graphicsApi = QStringLiteral("DirectX 11");
+                    g.architecture = QStringLiteral("x64");
+                    executableCandidates = {QStringLiteral("XIVLauncher game executable | DirectX 11 | x64 | %1")
+                                                .arg(xivExecutable)};
+                    g.importDiagnostics << QStringLiteral("Resolved FINAL FANTASY XIV through the XIVLauncher game directory: %1")
+                                               .arg(xivExecutable);
+                }
+            }
             const bool launcherOnlyCandidate = !g.exePath.isEmpty() && isLikelyLauncherExecutable(g.exePath);
             if ((g.exePath.isEmpty() || launcherOnlyCandidate) && !g.protonPrefix.isEmpty()) {
                 QString ubisoftInstallPath;

@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QSet>
 #include <QStringList>
+#include <QTimer>
 
 class CoverService final : public QObject {
     Q_OBJECT
@@ -58,10 +59,12 @@ private:
     void setLastStatus(const QString &status);
     void loadNegativeCache();
     void saveNegativeCache() const;
+    void scheduleNegativeCacheSave();
     void rememberMissing(const QString &appId, bool banner);
     void forgetMissing(const QString &appId, bool banner);
 
     QNetworkAccessManager m_network;
+    QTimer m_negativeCacheSaveTimer;
     QSet<QString> m_pending;
     QSet<QString> m_missing;
     QSet<QString> m_bannerPending;

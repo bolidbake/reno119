@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QString>
 #include <QVector>
 
@@ -9,6 +10,7 @@ struct RenoDxCatalogEntry {
     QString sourceOwner;
     QString sourceRepo;
     QString sourcePath;
+    QString normalizedTitle;
 
     QString sourceKey() const {
         if (sourceOwner.isEmpty() || sourceRepo.isEmpty())
@@ -53,5 +55,7 @@ public:
     static QString subtitleBaseName(const QString &rawName);
     static QString cleanDisplayTitle(const QString &rawName);
     static RenoDxTitleMatch resolve(const QString &gameName, const QVector<RenoDxCatalogEntry> &entries);
+    static RenoDxTitleMatch resolve(const QString &gameName, const QVector<RenoDxCatalogEntry> &entries,
+                                    const QHash<QString, int> &exactIndex);
     static QString methodDisplayName(RenoDxTitleMatch::Method method);
 };

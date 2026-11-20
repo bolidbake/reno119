@@ -2432,6 +2432,10 @@ ApplicationWindow {
         }
 
         contentItem: ColumnLayout {
+            // Result rows can appear above the game list after a bulk update.
+            // Keep the popup's layout content inside its visual bounds while
+            // allowing the ListView itself to continue scrolling normally.
+            clip: true
             spacing: 0
 
             RowLayout {

@@ -45,44 +45,76 @@ QString RenoDxTitleMatcher::normalizeGameName(const QString &rawName) {
 }
 
 RenoDxTitleMatch RenoDxTitleMatcher::resolve(const QString &gameName, const QVector<RenoDxCatalogEntry> &entries) {
+    static const QHash<QString, int> kEmptyIndex;
+    return resolve(gameName, entries, kEmptyIndex);
+}
+
+RenoDxTitleMatch RenoDxTitleMatcher::resolve(const QString &gameName, const QVector<RenoDxCatalogEntry> &entries,
+                                             const QHash<QString, int> &exactIndex) {
     RenoDxTitleMatch result;
     const QString fullKey = normalizeGameName(gameName);
     if (fullKey.isEmpty())
         return result;
 
-    for (const auto &entry : entries) {
-        if (normalizeGameName(entry.title) == fullKey) {
-            result.title = cleanDisplayTitle(entry.title);
-            result.url = entry.url;
-            result.sourceOwner = entry.sourceOwner;
-            result.sourceRepo = entry.sourceRepo;
-            result.sourcePath = entry.sourcePath;
-            result.method = RenoDxTitleMatch::Method::ExactTitle;
-            return result;
+    const auto fillResult = [&](const RenoDxCatalogEntry &entry, RenoDxTitleMatch::Method method) {
+        result.title = cleanDisplayTitle(entry.title);
+        result.url = entry.url;
+        result.sourceOwner = entry.sourceOwner;
+        result.sourceRepo = entry.sourceRepo;
+        result.sourcePath = entry.sourcePath;
+        result.method = method;
+        return result;
+    };
+
+    if (!exactIndex.isEmpty()) {
+        const auto exactIt = exactIndex.constFind(fullKey);
+        if (exactIt != exactIndex.cend() && exactIt.value() >= 0 && exactIt.value() < entries.size())
+            return fillResult(entries.at(exactIt.value()), RenoDxTitleMatch::Method::ExactTitle);
+
+        const QString baseKey = normalizeGameName(subtitleBaseName(gameName));
+        if (!baseKey.isEmpty() && baseKey != fullKey) {
+            const auto baseIt = exactIndex.constFind(baseKey);
+            if (baseIt != exactIndex.cend() && baseIt.value() >= 0 && baseIt.value() < entries.size())
+                return fillResult(entries.at(baseIt.value()), RenoDxTitleMatch::Method::SubtitleExact);
         }
     }
 
-    const QString baseKey = normalizeGameName(subtitleBaseName(gameName));
-    if (!baseKey.isEmpty() && baseKey != fullKey) {
-        for (const auto &entry : entries) {
-            if (normalizeGameName(entry.title) == baseKey) {
-                result.title = cleanDisplayTitle(entry.title);
-                result.url = entry.url;
-                result.sourceOwner = entry.sourceOwner;
-                result.sourceRepo = entry.sourceRepo;
-                result.sourcePath = entry.sourcePath;
-                result.method = RenoDxTitleMatch::Method::SubtitleExact;
-                return result;
+    QVector<QString> computedKeys;
+    const auto keyForIndex = [&](int i) -> const QString & {
+        const auto &entry = entries.at(i);
+        if (!entry.normalizedTitle.isEmpty())
+            return entry.normalizedTitle;
+        if (computedKeys.isEmpty())
+            computedKeys.resize(entries.size());
+        if (computedKeys[i].isEmpty())
+            computedKeys[i] = normalizeGameName(entry.title);
+        return computedKeys[i];
+    };
+
+    if (exactIndex.isEmpty()) {
+        for (int i = 0; i < entries.size(); ++i) {
+            if (keyForIndex(i) == fullKey)
+                return fillResult(entries.at(i), RenoDxTitleMatch::Method::ExactTitle);
+        }
+
+        const QString baseKey = normalizeGameName(subtitleBaseName(gameName));
+        if (!baseKey.isEmpty() && baseKey != fullKey) {
+            for (int i = 0; i < entries.size(); ++i) {
+                if (keyForIndex(i) == baseKey)
+                    return fillResult(entries.at(i), RenoDxTitleMatch::Method::SubtitleExact);
             }
         }
     }
+
+    if (fullKey.size() < 8)
+        return result;
 
     int bestScore = -1;
     int bestIndex = -1;
     bool ambiguous = false;
     for (int i = 0; i < entries.size(); ++i) {
-        const QString catalogKey = normalizeGameName(entries.at(i).title);
-        if (fullKey.size() < 8 || catalogKey.size() < 8)
+        const QString &catalogKey = keyForIndex(i);
+        if (catalogKey.size() < 8)
             continue;
         if (!fullKey.startsWith(catalogKey) && !catalogKey.startsWith(fullKey))
             continue;
@@ -97,14 +129,8 @@ RenoDxTitleMatch RenoDxTitleMatcher::resolve(const QString &gameName, const QVec
         }
     }
 
-    if (bestIndex >= 0 && !ambiguous) {
-        result.title = cleanDisplayTitle(entries.at(bestIndex).title);
-        result.url = entries.at(bestIndex).url;
-        result.sourceOwner = entries.at(bestIndex).sourceOwner;
-        result.sourceRepo = entries.at(bestIndex).sourceRepo;
-        result.sourcePath = entries.at(bestIndex).sourcePath;
-        result.method = RenoDxTitleMatch::Method::Prefix;
-    }
+    if (bestIndex >= 0 && !ambiguous)
+        return fillResult(entries.at(bestIndex), RenoDxTitleMatch::Method::Prefix);
     return result;
 }
 

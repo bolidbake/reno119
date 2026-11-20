@@ -34,8 +34,8 @@ QString detectReShadeVersionFromLog(const QString &exeDir) {
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
         return {};
     const QString text = QString::fromUtf8(f.read(131072));
-    const QRegularExpression rx(QStringLiteral(R"(ReShade[^0-9]*([0-9]+(?:\.[0-9]+){1,3}))"),
-                                QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression rx(QStringLiteral(R"(ReShade[^0-9]*([0-9]+(?:\.[0-9]+){1,3}))"),
+                                       QRegularExpression::CaseInsensitiveOption);
     const auto match = rx.match(text);
     return match.hasMatch() ? match.captured(1) : QString();
 }
@@ -61,12 +61,16 @@ QVariantMap basicDiagnosticFor(const GameInfo &g) {
     QString level = QStringLiteral("ok");
     QString summary = QStringLiteral("Ready");
 
-    const bool exeExists = !g.exePath.trimmed().isEmpty() && QFileInfo(g.exePath).isFile();
+    const bool exeExists = g.diagnosticCacheValid
+        ? g.cachedExeExists
+        : (!g.exePath.trimmed().isEmpty() && QFileInfo(g.exePath).isFile());
     // Scanner and executable-override paths are PE-validated before assignment.
     // Keep row painting cheap; the on-demand diagnostic view performs a fresh PE check.
     const bool exeValid = exeExists;
-    const bool prefixValid = !g.protonPrefix.trimmed().isEmpty() &&
-                             QDir(QDir(g.protonPrefix).filePath(QStringLiteral("drive_c"))).exists();
+    const bool prefixValid = g.diagnosticCacheValid
+        ? g.cachedPrefixValid
+        : (!g.protonPrefix.trimmed().isEmpty() &&
+           QDir(QDir(g.protonPrefix).filePath(QStringLiteral("drive_c"))).exists());
 
     if (!exeExists) {
         level = QStringLiteral("error");
@@ -85,6 +89,65 @@ QVariantMap basicDiagnosticFor(const GameInfo &g) {
     result.insert(QStringLiteral("level"), level);
     result.insert(QStringLiteral("summary"), summary);
     return result;
+}
+
+QString computeWineOverrides(const GameInfo &g, const QJsonObject &state, bool stateLoaded) {
+    QStringList dlls;
+
+    QString reshadeDll;
+    bool managedProxyRecorded = false;
+    bool managedProxyIsIndirect = false;
+    if (stateLoaded) {
+        reshadeDll = state.value(QStringLiteral("reshadeProxy")).toString();
+        managedProxyRecorded = !reshadeDll.isEmpty();
+        if (reshadeDll.contains('/') || reshadeDll.contains('\\') ||
+            reshadeDll.compare(QStringLiteral("ReShade64.dll"), Qt::CaseInsensitive) == 0 ||
+            reshadeDll.compare(QStringLiteral("ReShade.asi"), Qt::CaseInsensitive) == 0) {
+            managedProxyIsIndirect = true;
+            reshadeDll.clear();
+        } else if (reshadeDll.endsWith(QStringLiteral(".dll"), Qt::CaseInsensitive)) {
+            reshadeDll.chop(4);
+        }
+    }
+
+    if (!managedProxyRecorded && g.reshadeExternal && !g.reshadeProxy.isEmpty()) {
+        QString externalProxy = g.reshadeProxy;
+        if (externalProxy.compare(QStringLiteral("ReShade64.dll"), Qt::CaseInsensitive) != 0 &&
+            externalProxy.compare(QStringLiteral("ReShade32.dll"), Qt::CaseInsensitive) != 0 &&
+            externalProxy.compare(QStringLiteral("ReShade.asi"), Qt::CaseInsensitive) != 0) {
+            if (externalProxy.endsWith(QStringLiteral(".dll"), Qt::CaseInsensitive))
+                externalProxy.chop(4);
+            reshadeDll = externalProxy;
+        }
+    }
+
+    if (!managedProxyRecorded && reshadeDll.isEmpty() && g.reshadeInstalled && !g.reshade64Installed) {
+        if (g.graphicsApi == QStringLiteral("DirectX 9"))
+            reshadeDll = QStringLiteral("d3d9");
+        else if (g.graphicsApi == QStringLiteral("OpenGL"))
+            reshadeDll = QStringLiteral("opengl32");
+        else if (g.graphicsApi.startsWith(QStringLiteral("DirectX")))
+            reshadeDll = QStringLiteral("dxgi");
+    }
+
+    if (!managedProxyIsIndirect && !reshadeDll.isEmpty())
+        dlls << reshadeDll;
+
+    // REFramework is injected through dinput8.dll on Proton. Keep it in the
+    // same suggested override expression as ReShade. Reno119 never writes Steam
+    // launch options automatically; this value is advisory/copy-only.
+    if (g.reframeworkInstalled)
+        dlls << QStringLiteral("dinput8");
+
+    dlls.removeDuplicates();
+    if (dlls.isEmpty())
+        return {};
+
+    QStringList overrides;
+    overrides.reserve(dlls.size());
+    for (const QString &dll : dlls)
+        overrides << QStringLiteral("%1=n,b").arg(dll);
+    return QStringLiteral("WINEDLLOVERRIDES=\"%1\"").arg(overrides.join(';'));
 }
 
 QVariantMap healthInfoForGame(const GameInfo &g) {
@@ -351,7 +414,6 @@ GameModel::GameModel(QObject *parent)
                 game.reframeworkUpdateAvailable = it.value().reframework;
             }
         }
-        sortGames(m_allGames);
         emit totalCountChanged();
         applyFilter();
         m_scanning = false;
@@ -383,65 +445,19 @@ int GameModel::rowCount(const QModelIndex &parent) const {
 }
 
 QString GameModel::wineOverridesFor(const GameInfo &g) {
-    QStringList dlls;
+    if (g.wineOverridesCached)
+        return g.cachedWineOverrides;
 
-    QString reshadeDll;
-    bool managedProxyRecorded = false;
-    bool managedProxyIsIndirect = false;
+    QJsonObject state;
+    bool stateLoaded = false;
     if (!g.exePath.isEmpty()) {
         QFile stateFile(QFileInfo(g.exePath).absolutePath() + QStringLiteral("/.reno119-state.json"));
         if (stateFile.open(QIODevice::ReadOnly)) {
-            const auto state = QJsonDocument::fromJson(stateFile.readAll()).object();
-            reshadeDll = state.value(QStringLiteral("reshadeProxy")).toString();
-            managedProxyRecorded = !reshadeDll.isEmpty();
-            if (reshadeDll.contains('/') || reshadeDll.contains('\\') ||
-                reshadeDll.compare(QStringLiteral("ReShade64.dll"), Qt::CaseInsensitive) == 0 ||
-                reshadeDll.compare(QStringLiteral("ReShade.asi"), Qt::CaseInsensitive) == 0) {
-                managedProxyIsIndirect = true;
-                reshadeDll.clear();
-            } else if (reshadeDll.endsWith(QStringLiteral(".dll"), Qt::CaseInsensitive)) {
-                reshadeDll.chop(4);
-            }
+            state = QJsonDocument::fromJson(stateFile.readAll()).object();
+            stateLoaded = true;
         }
     }
-
-    if (!managedProxyRecorded && g.reshadeExternal && !g.reshadeProxy.isEmpty()) {
-        QString externalProxy = g.reshadeProxy;
-        if (externalProxy.compare(QStringLiteral("ReShade64.dll"), Qt::CaseInsensitive) != 0 &&
-            externalProxy.compare(QStringLiteral("ReShade32.dll"), Qt::CaseInsensitive) != 0 &&
-            externalProxy.compare(QStringLiteral("ReShade.asi"), Qt::CaseInsensitive) != 0) {
-            if (externalProxy.endsWith(QStringLiteral(".dll"), Qt::CaseInsensitive))
-                externalProxy.chop(4);
-            reshadeDll = externalProxy;
-        }
-    }
-
-    if (!managedProxyRecorded && reshadeDll.isEmpty() && g.reshadeInstalled && !g.reshade64Installed) {
-        if (g.graphicsApi == QStringLiteral("DirectX 9"))
-            reshadeDll = QStringLiteral("d3d9");
-        else if (g.graphicsApi == QStringLiteral("OpenGL"))
-            reshadeDll = QStringLiteral("opengl32");
-        else if (g.graphicsApi.startsWith(QStringLiteral("DirectX")))
-            reshadeDll = QStringLiteral("dxgi");
-    }
-
-    if (!managedProxyIsIndirect && !reshadeDll.isEmpty())
-        dlls << reshadeDll;
-
-    // REFramework is injected through dinput8.dll on Proton. Keep it in the
-    // same suggested override expression as ReShade. Reno119 never writes Steam
-    // launch options automatically; this value is advisory/copy-only.
-    if (g.reframeworkInstalled)
-        dlls << QStringLiteral("dinput8");
-
-    dlls.removeDuplicates();
-    if (dlls.isEmpty())
-        return {};
-
-    QStringList overrides;
-    for (const QString &dll : dlls)
-        overrides << QStringLiteral("%1=n,b").arg(dll);
-    return QStringLiteral("WINEDLLOVERRIDES=\"%1\"").arg(overrides.join(';'));
+    return computeWineOverrides(g, state, stateLoaded);
 }
 
 QString GameModel::launchOptionsFor(const GameInfo &g) {
@@ -525,7 +541,7 @@ QVariant GameModel::data(const QModelIndex &index, int role) const {
 }
 
 QHash<int, QByteArray> GameModel::roleNames() const {
-    return {
+    static const QHash<int, QByteArray> roles = {
         {NameRole, "name"},
         {OriginalNameRole, "originalName"},
         {NicknameRole, "nickname"},
@@ -593,6 +609,7 @@ QHash<int, QByteArray> GameModel::roleNames() const {
         {LaunchOptionsRole, "launchOptions"},
         {WineOverridesRole, "wineOverrides"}
     };
+    return roles;
 }
 
 QString GameModel::libraryCachePath() const {
@@ -682,17 +699,27 @@ void GameModel::refresh() {
     m_scanning = true;
     emit scanningChanged();
     m_watcher.setFuture(QtConcurrent::run([scanSteam, scanHeroic, scanLutris, heroicRoot, lutrisDataRoot, lutrisConfigRoot] {
+        // Run independent launcher scanners concurrently when multiple sources are enabled.
+        QFuture<QVector<GameInfo>> heroicFuture;
+        QFuture<QVector<GameInfo>> lutrisFuture;
+        if (scanHeroic)
+            heroicFuture = QtConcurrent::run([heroicRoot] { return HeroicScanner::scan(heroicRoot); });
+        if (scanLutris)
+            lutrisFuture = QtConcurrent::run([lutrisDataRoot, lutrisConfigRoot] {
+                return LutrisScanner::scan(lutrisDataRoot, lutrisConfigRoot);
+            });
+
         QVector<GameInfo> games;
         if (scanSteam)
             games = SteamScanner::scan();
         if (scanHeroic) {
-            const auto heroic = HeroicScanner::scan(heroicRoot);
+            const auto heroic = heroicFuture.result();
             games.reserve(games.size() + heroic.size());
             for (const auto &game : heroic)
                 games.push_back(game);
         }
         if (scanLutris) {
-            const auto lutris = LutrisScanner::scan(lutrisDataRoot, lutrisConfigRoot);
+            const auto lutris = lutrisFuture.result();
             games.reserve(games.size() + lutris.size());
             for (const auto &game : lutris)
                 games.push_back(game);
@@ -1201,6 +1228,12 @@ void GameModel::refreshInstallState(GameInfo &g) {
     g.integrityWarning = false;
     g.integritySummary.clear();
     g.reframeworkSupported = reFrameworkSupportedFor(g);
+    g.cachedExeExists = !g.exePath.trimmed().isEmpty() && QFileInfo(g.exePath).isFile();
+    g.cachedPrefixValid = !g.protonPrefix.trimmed().isEmpty() &&
+                          QDir(QDir(g.protonPrefix).filePath(QStringLiteral("drive_c"))).exists();
+    g.diagnosticCacheValid = true;
+    g.cachedWineOverrides.clear();
+    g.wineOverridesCached = true;
     if (g.exePath.isEmpty())
         return;
 
@@ -1210,9 +1243,12 @@ void GameModel::refreshInstallState(GameInfo &g) {
                             QFileInfo::exists(exeDir + QStringLiteral("/OptiScaler.dll")) ||
                             QFileInfo::exists(exeDir + QStringLiteral("/.reno119-optiscaler.json"));
     QJsonObject state;
+    bool stateLoaded = false;
     QFile stateFile(exeDir + QStringLiteral("/.reno119-state.json"));
-    if (stateFile.open(QIODevice::ReadOnly))
+    if (stateFile.open(QIODevice::ReadOnly)) {
         state = QJsonDocument::fromJson(stateFile.readAll()).object();
+        stateLoaded = true;
+    }
 
     QStringList integrityIssues;
     const auto expectManagedFile = [&](const QString &stateKey, const QString &relativePrefix, const QString &label) {
@@ -1325,6 +1361,8 @@ void GameModel::refreshInstallState(GameInfo &g) {
 
     g.integrityWarning = !integrityIssues.isEmpty();
     g.integritySummary = integrityIssues.join(QStringLiteral("\n"));
+    g.cachedWineOverrides = computeWineOverrides(g, state, stateLoaded);
+    g.wineOverridesCached = true;
 }
 
 bool GameModel::reFrameworkSupportedFor(const GameInfo &g) const {
@@ -1333,9 +1371,8 @@ bool GameModel::reFrameworkSupportedFor(const GameInfo &g) const {
     const QString gameKey = normalizedGameKey(g.name);
     if (gameKey.isEmpty())
         return false;
-    for (const QString &title : m_reFrameworkSupportedTitles) {
-        const QString supportedKey = normalizedGameKey(title);
-        if (supportedKey.size() >= 6 && (gameKey.contains(supportedKey) || supportedKey.contains(gameKey)))
+    for (const QString &supportedKey : m_reFrameworkSupportedKeys) {
+        if (gameKey.contains(supportedKey) || supportedKey.contains(gameKey))
             return true;
     }
     return false;
@@ -1343,16 +1380,27 @@ bool GameModel::reFrameworkSupportedFor(const GameInfo &g) const {
 
 void GameModel::setReFrameworkSupportedTitles(const QStringList &titles) {
     m_reFrameworkSupportedTitles = titles;
+    m_reFrameworkSupportedKeys.clear();
+    m_reFrameworkSupportedKeys.reserve(titles.size());
+    for (const QString &title : titles) {
+        const QString key = normalizedGameKey(title);
+        if (key.size() >= 6)
+            m_reFrameworkSupportedKeys << key;
+    }
     bool changed = false;
+    QHash<QString, bool> supportedByAppId;
+    supportedByAppId.reserve(m_allGames.size());
     for (auto &game : m_allGames) {
         const bool supported = reFrameworkSupportedFor(game);
+        supportedByAppId.insert(game.appId, supported);
         if (game.reframeworkSupported != supported) {
             game.reframeworkSupported = supported;
             changed = true;
         }
     }
     for (auto &game : m_games) {
-        const bool supported = reFrameworkSupportedFor(game);
+        const auto it = supportedByAppId.constFind(game.appId);
+        const bool supported = (it != supportedByAppId.cend()) ? it.value() : reFrameworkSupportedFor(game);
         if (game.reframeworkSupported != supported) {
             game.reframeworkSupported = supported;
             changed = true;
@@ -1574,9 +1622,10 @@ bool GameModel::setGraphicsApiOverride(int row, const QString &api) {
         return false;
     g.graphicsApi = normalized;
     g.graphicsApiOverridden = true;
+    g.wineOverridesCached = false;
     syncGameBackToAllGames(g);
     ++m_revision;
-    emit dataChanged(index(row), index(row), {GraphicsApiRole, GraphicsApiOverriddenRole});
+    emit dataChanged(index(row), index(row), {GraphicsApiRole, GraphicsApiOverriddenRole, LaunchOptionsRole, WineOverridesRole});
     emit revisionChanged();
     return true;
 }
@@ -1588,9 +1637,10 @@ void GameModel::clearGraphicsApiOverride(int row) {
     m_settings.remove(graphicsApiOverrideKey(g.appId));
     g.graphicsApi = g.detectedGraphicsApi.isEmpty() ? QStringLiteral("Unknown") : g.detectedGraphicsApi;
     g.graphicsApiOverridden = false;
+    g.wineOverridesCached = false;
     syncGameBackToAllGames(g);
     ++m_revision;
-    emit dataChanged(index(row), index(row), {GraphicsApiRole, GraphicsApiOverriddenRole});
+    emit dataChanged(index(row), index(row), {GraphicsApiRole, GraphicsApiOverriddenRole, LaunchOptionsRole, WineOverridesRole});
     emit revisionChanged();
 }
 

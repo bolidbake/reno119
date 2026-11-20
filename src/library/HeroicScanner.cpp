@@ -43,16 +43,14 @@ QJsonObject heroicGameConfig(const QString &appFolder, const QString &appName) {
     return perGame.isEmpty() ? root : perGame;
 }
 
-QString heroicPrefixRaw(const QString &appFolder, const QString &appName) {
-    const QJsonObject config = heroicGameConfig(appFolder, appName);
+QString heroicPrefixRawFromConfig(const QJsonObject &config) {
     QString prefix = config.value(QStringLiteral("winePrefix")).toString().trimmed();
     if (prefix.startsWith(QStringLiteral("~/")))
         prefix.replace(0, 1, QDir::homePath());
     return prefix;
 }
 
-QString heroicTargetExe(const QString &appFolder, const QString &appName) {
-    const QJsonObject config = heroicGameConfig(appFolder, appName);
+QString heroicTargetExeFromConfig(const QJsonObject &config) {
     return config.value(QStringLiteral("targetExe")).toString().trimmed();
 }
 
@@ -89,10 +87,11 @@ GameInfo makeHeroicGame(const QString &appFolder,
     g.source = QStringLiteral("Heroic");
     g.installPath = QDir::cleanPath(installPath);
 
-    const QString rawPrefix = heroicPrefixRaw(appFolder, appName);
+    const QJsonObject gameConfig = heroicGameConfig(appFolder, appName);
+    const QString rawPrefix = heroicPrefixRawFromConfig(gameConfig);
     g.protonPrefix = normalizedPrefix(rawPrefix);
 
-    const QString targetExe = heroicTargetExe(appFolder, appName);
+    const QString targetExe = heroicTargetExeFromConfig(gameConfig);
     QString exe = targetExe;
     if (exe.isEmpty())
         exe = configuredExe.trimmed();

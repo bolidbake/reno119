@@ -30,13 +30,10 @@ qint64 rvaToOffset(const QVector<PeParser::Section> &sections, quint32 rva) {
 
 QString readCStringAt(QFile &f, qint64 off, int maxLen = 260) {
     if (off < 0 || !f.seek(off)) return {};
-    QByteArray out;
-    out.reserve(maxLen);
-    for (int i = 0; i < maxLen; ++i) {
-        char c = 0;
-        if (f.read(&c, 1) != 1 || c == '\0') break;
-        out.append(c);
-    }
+    QByteArray out = f.read(maxLen);
+    const qsizetype nul = out.indexOf('\0');
+    if (nul >= 0)
+        out.truncate(nul);
     return QString::fromLatin1(out).trimmed().toLower();
 }
 
@@ -46,13 +43,31 @@ void scanImports(QFile &f, const QVector<PeParser::Section> &sections,
     const qint64 tableOff = rvaToOffset(sections, tableRva);
     if (tableOff < 0) return;
 
-    for (int i = 0; i < 2048; ++i) {
-        const qint64 descOff = tableOff + static_cast<qint64>(i) * descriptorSize;
-        if (!f.seek(descOff)) break;
-        const QByteArray desc = f.read(descriptorSize);
-        if (desc.size() != descriptorSize) break;
-        const quint32 nameRva = u32(desc, nameOffset);
-        if (nameRva == 0) break;
+    // Read descriptors in batches to avoid seeking back and forth per entry.
+    constexpr int kBatchDescriptors = 64;
+    QVector<quint32> nameRvas;
+    nameRvas.reserve(64);
+    for (int base = 0; base < 2048; base += kBatchDescriptors) {
+        const qint64 batchOff = tableOff + static_cast<qint64>(base) * descriptorSize;
+        if (!f.seek(batchOff)) break;
+        const QByteArray batch = f.read(static_cast<qint64>(kBatchDescriptors) * descriptorSize);
+        const int count = static_cast<int>(batch.size() / descriptorSize);
+        if (count <= 0) break;
+
+        bool hitEnd = false;
+        for (int i = 0; i < count; ++i) {
+            const quint32 nameRva = u32(batch, static_cast<qsizetype>(i) * descriptorSize + nameOffset);
+            if (nameRva == 0) {
+                hitEnd = true;
+                break;
+            }
+            nameRvas.push_back(nameRva);
+        }
+        if (hitEnd || count < kBatchDescriptors)
+            break;
+    }
+
+    for (const quint32 nameRva : nameRvas) {
         const QString name = readCStringAt(f, rvaToOffset(sections, nameRva));
         if (!name.isEmpty() && !imports.contains(name, Qt::CaseInsensitive))
             imports.append(name);
@@ -185,43 +200,75 @@ QString PeParser::detectGraphicsApiFallback(const QString &path, QStringList *ev
 
     QHash<QString, int> scores;
 
+    // Inspect adjacent module *names* first. This is enough for common layouts
+    // such as Watch Dogs 2's GFSDK_*_D3D11 modules and avoids reading multi-MB
+    // executables or opening dozens of DLLs when filenames already identify the API.
+    const QFileInfo exeInfo(path);
+    const QString exeFileName = exeInfo.fileName();
+    QDir dir(exeInfo.absolutePath());
+    const QFileInfoList dlls = dir.entryInfoList(QStringList{QStringLiteral("*.dll")}, QDir::Files | QDir::Readable);
+
+    static const QSet<QString> proxyNames = {
+        QStringLiteral("dxgi.dll"), QStringLiteral("d3d8.dll"), QStringLiteral("d3d9.dll"),
+        QStringLiteral("d3d10.dll"), QStringLiteral("d3d10_1.dll"), QStringLiteral("d3d11.dll"),
+        QStringLiteral("d3d12.dll"), QStringLiteral("opengl32.dll"), QStringLiteral("vulkan-1.dll")
+    };
+
+    for (const QFileInfo &dll : dlls) {
+        if (proxyNames.contains(dll.fileName().toLower()))
+            continue;
+        const QString nameApi = apiFromName(dll.completeBaseName());
+        if (!nameApi.isEmpty())
+            addScore(scores, nameApi, 6, QStringLiteral("renderer module name %1").arg(dll.fileName()));
+    }
+
+    if (const QString winner = clearWinner(scores, 6); !winner.isEmpty())
+        return winner;
+
     // Some engines resolve graphics runtimes with LoadLibrary/GetProcAddress,
     // so the DLL never appears in the import table. Keep this fallback cheap:
     // scan at most a bounded head/tail sample instead of reading a multi-GB EXE
     // in full during every library refresh.
     struct RuntimeProbe { QString api; QList<QByteArray> needles; QList<QByteArray> wideNeedles; };
-    QList<RuntimeProbe> probes = {
-        {QStringLiteral("DirectX 12"), {"d3d12.dll", "d3d12createdevice"}, {}},
-        {QStringLiteral("DirectX 11"), {"d3d11.dll", "d3d11createdevice"}, {}},
-        {QStringLiteral("DirectX 10"), {"d3d10.dll", "d3d10createdevice"}, {}},
-        {QStringLiteral("DirectX 9"),  {"d3d9.dll", "direct3dcreate9"}, {}},
-        {QStringLiteral("Vulkan"),     {"vulkan-1.dll", "vkcreateinstance"}, {}},
-        {QStringLiteral("OpenGL"),     {"opengl32.dll", "wglcreatecontext"}, {}}
-    };
-    for (auto &probe : probes) {
-        for (const QByteArray &needle : probe.needles) {
-            QByteArray wide;
-            wide.reserve(needle.size() * 2);
-            for (char c : needle) {
-                wide.append(c);
-                wide.append('\0');
+    static const QList<RuntimeProbe> probes = [] {
+        QList<RuntimeProbe> list = {
+            {QStringLiteral("DirectX 12"), {"d3d12.dll", "d3d12createdevice"}, {}},
+            {QStringLiteral("DirectX 11"), {"d3d11.dll", "d3d11createdevice"}, {}},
+            {QStringLiteral("DirectX 10"), {"d3d10.dll", "d3d10createdevice"}, {}},
+            {QStringLiteral("DirectX 9"),  {"d3d9.dll", "direct3dcreate9"}, {}},
+            {QStringLiteral("Vulkan"),     {"vulkan-1.dll", "vkcreateinstance"}, {}},
+            {QStringLiteral("OpenGL"),     {"opengl32.dll", "wglcreatecontext"}, {}}
+        };
+        for (auto &probe : list) {
+            for (const QByteArray &needle : probe.needles) {
+                QByteArray wide;
+                wide.reserve(needle.size() * 2);
+                for (char c : needle) {
+                    wide.append(c);
+                    wide.append('\0');
+                }
+                probe.wideNeedles.append(wide);
             }
-            probe.wideNeedles.append(wide);
         }
-    }
+        return list;
+    }();
 
-    auto scanRuntimeBuffer = [&](const QByteArray &data) {
-        const QByteArray lower = data.toLower();
+    auto scanRuntimeBuffer = [&](QByteArray data) {
+        // Lowercase ASCII in-place to avoid allocating a second multi-MB buffer.
+        for (char &c : data) {
+            if (c >= 'A' && c <= 'Z')
+                c = static_cast<char>(c + ('a' - 'A'));
+        }
         for (const auto &probe : probes) {
             bool matched = false;
             for (int i = 0; i < probe.needles.size(); ++i) {
-                if (lower.contains(probe.needles.at(i)) || lower.contains(probe.wideNeedles.at(i))) {
+                if (data.contains(probe.needles.at(i)) || data.contains(probe.wideNeedles.at(i))) {
                     matched = true;
                     break;
                 }
             }
             if (matched)
-                addScore(scores, probe.api, 6, QStringLiteral("runtime reference in %1").arg(QFileInfo(path).fileName()));
+                addScore(scores, probe.api, 6, QStringLiteral("runtime reference in %1").arg(exeFileName));
         }
     };
 
@@ -238,26 +285,6 @@ QString PeParser::detectGraphicsApiFallback(const QString &path, QStringList *ev
             if (file.seek(qMax<qint64>(0, size - tailReadLimit)))
                 scanRuntimeBuffer(file.read(tailReadLimit));
         }
-    }
-
-    // Inspect adjacent module *names* first. This is enough for common layouts
-    // such as Watch Dogs 2's GFSDK_*_D3D11 modules and avoids opening dozens of
-    // DLLs merely to discover an API that their filenames already identify.
-    QDir dir(QFileInfo(path).absolutePath());
-    QFileInfoList dlls = dir.entryInfoList(QStringList{QStringLiteral("*.dll")}, QDir::Files | QDir::Readable);
-
-    const QSet<QString> proxyNames = {
-        QStringLiteral("dxgi.dll"), QStringLiteral("d3d8.dll"), QStringLiteral("d3d9.dll"),
-        QStringLiteral("d3d10.dll"), QStringLiteral("d3d10_1.dll"), QStringLiteral("d3d11.dll"),
-        QStringLiteral("d3d12.dll"), QStringLiteral("opengl32.dll"), QStringLiteral("vulkan-1.dll")
-    };
-
-    for (const QFileInfo &dll : dlls) {
-        if (proxyNames.contains(dll.fileName().toLower()))
-            continue;
-        const QString nameApi = apiFromName(dll.completeBaseName());
-        if (!nameApi.isEmpty())
-            addScore(scores, nameApi, 6, QStringLiteral("renderer module name %1").arg(dll.fileName()));
     }
 
     if (const QString winner = clearWinner(scores, 6); !winner.isEmpty())

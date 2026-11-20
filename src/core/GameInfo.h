@@ -63,4 +63,12 @@ struct GameInfo {
     QStringList importDiagnostics;
     QVariantMap sourceMetadata;
     QStringList detectionHistory;
+
+    // Transient runtime cache populated during refreshInstallState() so
+    // GameModel::data() stays free of synchronous filesystem/JSON I/O.
+    bool diagnosticCacheValid = false;
+    bool cachedExeExists = false;
+    bool cachedPrefixValid = false;
+    bool wineOverridesCached = false;
+    QString cachedWineOverrides;
 };
